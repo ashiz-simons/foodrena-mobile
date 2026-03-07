@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "835566561034",
+    "project_id": "foodrena",
+    "storage_bucket": "foodrena.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:835566561034:android:9b7c840b92b8562ef23cf3",
+        "android_client_info": {
+          "package_name": "com.ashizverse.foodrena_mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD4er_ao4pMgraJKB0vCgG9PbQdd3HM92w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

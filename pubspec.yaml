@@ -22,26 +22,30 @@ dependencies:
   # Storage
   shared_preferences: ^2.2.2
 
-  # Navigation / Utils
+  # Utils
   intl: ^0.19.0
 
   # WebView (Paystack)
   webview_flutter: ^4.7.0
 
-  # Maps (future rider tracking)
+  # Maps
   google_maps_flutter: ^2.6.1
-  location: ^5.0.3
 
-  #location (rider)
+  # Location (rider tracking)
   geolocator: ^11.0.0
   permission_handler: ^11.3.0
-  #image
+
+  # Image
   image_picker: ^1.1.0
-  
+
+  # Firebase / Notifications ✅
+  firebase_core: ^3.0.0
+  firebase_messaging: ^15.0.0
+  flutter_local_notifications: ^17.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
   flutter_lints: ^4.0.0
 
 flutter:

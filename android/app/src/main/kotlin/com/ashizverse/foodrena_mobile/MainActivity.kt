@@ -1,4 +1,4 @@
-package com.example.foodrena_mobile
+package com.ashizverse.foodrena_mobile
 
 import io.flutter.embedding.android.FlutterActivity
 

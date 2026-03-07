@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'auth_gate.dart';
+import 'services/notification_service.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ✅ Initialize Firebase before anything else
+  await Firebase.initializeApp();
+
   runApp(const App());
 }
 
@@ -11,9 +17,17 @@ class App extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: AuthGate(),
+      home: const AuthGate(),
+      builder: (context, child) {
+        // ✅ Initialize notifications once the widget tree is ready
+        // Using builder ensures context is available for navigation
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          NotificationService.init(context);
+        });
+        return child!;
+      },
     );
   }
 }
