@@ -24,7 +24,6 @@ class _VendorOnboardingScreenState extends State<VendorOnboardingScreen> {
   final accountNumberCtrl = TextEditingController();
   final accountNameCtrl = TextEditingController();
 
-  String selectedZone = "zone_a";
   bool loading = false;
   String error = "";
 
@@ -63,7 +62,6 @@ class _VendorOnboardingScreenState extends State<VendorOnboardingScreen> {
         "bankName": bankNameCtrl.text.trim(),
         "accountNumber": accountNumberCtrl.text.trim(),
         "accountName": accountNameCtrl.text.trim(),
-        "zone": selectedZone,
       });
 
       if (!mounted) return;
@@ -131,7 +129,6 @@ class _VendorOnboardingScreenState extends State<VendorOnboardingScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         foregroundColor: Colors.black87,
-        // ✅ Back button works normally
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
@@ -146,29 +143,6 @@ class _VendorOnboardingScreenState extends State<VendorOnboardingScreen> {
             _field("City", cityCtrl),
             _field("State", stateCtrl),
             _field("Country", countryCtrl),
-
-            _sectionHeader("Delivery Zone", Icons.map_outlined),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: DropdownButtonFormField<String>(
-                value: selectedZone,
-                decoration: InputDecoration(
-                  labelText: "Zone",
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
-                  ),
-                ),
-                items: const [
-                  DropdownMenuItem(value: "zone_a", child: Text("Zone A")),
-                  DropdownMenuItem(value: "zone_b", child: Text("Zone B")),
-                  DropdownMenuItem(value: "zone_c", child: Text("Zone C")),
-                ],
-                onChanged: (val) => setState(() => selectedZone = val!),
-              ),
-            ),
 
             _sectionHeader("Bank Details", Icons.account_balance_outlined),
             _field("Bank Name", bankNameCtrl),
