@@ -1,15 +1,9 @@
 import 'package:flutter/material.dart';
-import 'screens/splash_screen.dart';
-import 'core/cart/cart_provider.dart';
-import 'core/cart/cart_controller.dart';
+import 'auth_gate.dart';
 
 void main() {
-  runApp(
-    CartProvider(
-      controller: CartController(),
-      child: const App(),
-    ),
-  );
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const App());
 }
 
 class App extends StatelessWidget {
@@ -19,7 +13,7 @@ class App extends StatelessWidget {
   Widget build(BuildContext context) {
     return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: SplashScreen(),
+      home: AuthGate(),
     );
   }
 }

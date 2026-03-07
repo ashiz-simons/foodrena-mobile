@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/customer_theme.dart';
 import '../../core/cart/cart_provider.dart';
+import '../../widgets/app_drawer.dart';
 
 import '../../screens/customer/customer_home.dart';
 import '../../screens/customer/customer_search.dart';
@@ -9,7 +10,14 @@ import '../../screens/customer/customer_profile.dart';
 import '../../screens/customer/cart_screen.dart';
 
 class CustomerNavShell extends StatefulWidget {
-  const CustomerNavShell({super.key});
+  final VoidCallback onLogout;
+  final VoidCallback? onRoleSwitch;
+
+  const CustomerNavShell({
+    super.key,
+    required this.onLogout,
+    this.onRoleSwitch,
+  });
 
   @override
   State<CustomerNavShell> createState() => _CustomerNavShellState();
@@ -18,21 +26,32 @@ class CustomerNavShell extends StatefulWidget {
 class _CustomerNavShellState extends State<CustomerNavShell> {
   int _currentIndex = 0;
 
-  final screens = const [
-    CustomerHome(),
-    CustomerSearch(),
-    CartScreen(),
-    CustomerSupport(),
-    CustomerProfile(),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    final screens = [
+      CustomerHome(
+        onLogout: widget.onLogout,
+        onRoleSwitch: widget.onRoleSwitch ?? () {},
+      ),
+      const CustomerSearch(),
+      const CartScreen(),
+      const CustomerSupport(),
+      CustomerProfile(
+        onLogout: widget.onLogout,
+        onRoleSwitch: widget.onRoleSwitch ?? () {},
+      ),
+    ];
+
     return Theme(
       data: customerTheme,
       child: Scaffold(
+        drawer: AppDrawer(
+          onRoleSwitch: widget.onRoleSwitch ?? () {},
+          onLogout: widget.onLogout,
+        ),
         body: screens[_currentIndex],
         bottomNavigationBar: BottomNavigationBar(
+          type: BottomNavigationBarType.fixed,
           currentIndex: _currentIndex,
           onTap: (index) => setState(() => _currentIndex = index),
           items: [
@@ -69,13 +88,10 @@ class _CustomerNavShellState extends State<CustomerNavShell> {
 
   Widget _cartIconWithBadge(BuildContext context, {bool active = false}) {
     final cart = CartProvider.of(context);
-
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        Icon(active
-            ? Icons.shopping_cart
-            : Icons.shopping_cart_outlined),
+        Icon(active ? Icons.shopping_cart : Icons.shopping_cart_outlined),
         if (cart.items.isNotEmpty)
           Positioned(
             right: -6,
@@ -86,10 +102,7 @@ class _CustomerNavShellState extends State<CustomerNavShell> {
                 color: Colors.red,
                 borderRadius: BorderRadius.circular(10),
               ),
-              constraints: const BoxConstraints(
-                minWidth: 18,
-                minHeight: 18,
-              ),
+              constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
               child: Text(
                 cart.items.length.toString(),
                 style: const TextStyle(

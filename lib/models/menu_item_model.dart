@@ -1,25 +1,29 @@
 class MenuItem {
   final String id;
   final String name;
-  final String? description;
   final double price;
-  final bool available;
+  final String? description;
+  final String? imageUrl;
 
   MenuItem({
     required this.id,
     required this.name,
-    this.description,
     required this.price,
-    required this.available,
+    this.description,
+    this.imageUrl,
   });
 
-  factory MenuItem.fromJson(Map json) {
+  factory MenuItem.fromJson(Map<String, dynamic> json) {
+    final rawPrice = json["price"];
+
     return MenuItem(
-      id: json["_id"],
-      name: json["name"],
+      id: json["_id"] ?? json["id"] ?? "",
+      name: json["name"] ?? "",
+      price: rawPrice is num
+          ? rawPrice.toDouble()
+          : double.tryParse(rawPrice.toString()) ?? 0.0,
       description: json["description"],
-      price: (json["price"] as num).toDouble(),
-      available: json["available"] ?? true,
+      imageUrl: json["image"]?["url"] ?? json["imageUrl"],
     );
   }
 }

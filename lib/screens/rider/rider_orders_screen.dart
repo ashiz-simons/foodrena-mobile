@@ -15,32 +15,32 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
   bool loading = true;
   String error = "";
   List orders = [];
-
   bool hasNewOrders = false;
-  Timer? refreshTimer;
 
- @override
+  @override
   void initState() {
     super.initState();
     loadOrders();
 
-    SocketService.on("new_order", (_) {
+    // When backend assigns this rider a new order, show the banner
+    SocketService.on("new_order", (data) {
+      if (!mounted) return;
       setState(() => hasNewOrders = true);
+      // Auto-refresh so the new order appears immediately
+      loadOrders();
     });
   }
 
   @override
   void dispose() {
-    refreshTimer?.cancel();
+    SocketService.off("new_order");
     super.dispose();
   }
 
   Future<void> loadOrders() async {
     setState(() => loading = true);
-
     try {
       final data = await RiderService.getMyOrders();
-
       setState(() {
         orders = data;
         loading = false;
@@ -55,103 +55,118 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
     }
   }
 
-  Future<void> checkForNewOrders() async {
-    try {
-      final data = await RiderService.getMyOrders();
-      if (data.length > orders.length) {
-        setState(() => hasNewOrders = true);
-      }
-    } catch (_) {}
-  }
-
   Future<void> handleAction(
-      Future Function() action, String successMessage) async {
+      Future Function() action, String successMsg) async {
     try {
       await action();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(successMessage)),
+          SnackBar(content: Text(successMsg)),
         );
       }
       await loadOrders();
-    } catch (_) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Action failed")),
-      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(e.toString().replaceAll("Exception: ", "")),
+              backgroundColor: Colors.red),
+        );
+      }
     }
   }
 
   Widget buildActionButtons(Map order) {
     final status = (order["status"] ?? "").toString();
 
-    // 1️⃣ Rider Assigned → Accept / Reject
-    if (status == "rider_assigned") {
-      return Row(
-        children: [
-          Expanded(
-            child: ElevatedButton(
-              onPressed: () => handleAction(
-                () => RiderService.accept(order["_id"]),
-                "Order accepted",
+    switch (status) {
+      // ── Step 1: Rider is assigned → Accept or Reject ──
+      case "rider_assigned":
+        return Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.check),
+                label: const Text("Accept"),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                onPressed: () => handleAction(
+                  () => RiderService.accept(order["_id"]),
+                  "Order accepted — head to vendor",
+                ),
               ),
-              child: const Text("Accept"),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.close),
+                label: const Text("Reject"),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => handleAction(
+                  () => RiderService.reject(order["_id"]),
+                  "Order rejected",
+                ),
+              ),
+            ),
+          ],
+        );
+
+      // ── Step 2: Rider accepted → now at vendor, confirm arrival ──
+      case "arrived_at_pickup":
+        return SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.store),
+            label: const Text("I've arrived at vendor"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            onPressed: () => handleAction(
+              () => RiderService.arrived(order["_id"]),
+              "Arrival confirmed — collect the order",
             ),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () => handleAction(
-                () => RiderService.reject(order["_id"]),
-                "Order rejected",
-              ),
-              child: const Text("Reject"),
+        );
+
+      // ── Step 3: Arrived → pick up the food ──
+      case "picked_up":
+        return SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.shopping_bag),
+            label: const Text("Start Trip"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+            onPressed: () => handleAction(
+              () => RiderService.startTrip(order["_id"]),
+              "Trip started — deliver to customer",
             ),
           ),
-        ],
-      );
-    }
+        );
 
-    // 2️⃣ Arrived At Pickup → Confirm Pickup
-    if (status == "arrived_at_pickup") {
-      return ElevatedButton(
-        onPressed: () => handleAction(
-          () => RiderService.arrived(order["_id"]),
-          "Pickup confirmed",
-        ),
-        child: const Text("Confirm Pickup"),
-      );
-    }
+      // ── Step 4: On the way → complete delivery ──
+      case "on_the_way":
+        return SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.done_all),
+            label: const Text("Complete Delivery"),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            onPressed: () => handleAction(
+              () => RiderService.complete(order["_id"]),
+              "Delivery completed!",
+            ),
+          ),
+        );
 
-    // 3️⃣ Picked Up → Start Trip
-    if (status == "picked_up") {
-      return ElevatedButton(
-        onPressed: () => handleAction(
-          () => RiderService.startTrip(order["_id"]),
-          "Trip started",
-        ),
-        child: const Text("Start Trip"),
-      );
+      default:
+        return const SizedBox();
     }
-
-    // 4️⃣ On The Way → Complete Delivery
-    if (status == "on_the_way") {
-      return ElevatedButton(
-        onPressed: () => handleAction(
-          () => RiderService.complete(order["_id"]),
-          "Delivery completed",
-        ),
-        child: const Text("Complete Delivery"),
-      );
-    }
-
-    return const SizedBox();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Active Orders")),
+      appBar: AppBar(
+        title: const Text("Active Orders"),
+        backgroundColor: Colors.orange,
+      ),
       body: Column(
         children: [
           if (hasNewOrders)
@@ -162,7 +177,7 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                 color: Colors.orange,
                 padding: const EdgeInsets.all(12),
                 child: const Text(
-                  "New orders available — Tap to refresh",
+                  "🔔 New order assigned — tap to refresh",
                   style: TextStyle(color: Colors.white),
                   textAlign: TextAlign.center,
                 ),
@@ -171,7 +186,7 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
           Expanded(
             child: loading
                 ? const Center(child: CircularProgressIndicator())
-                : error.isNotEmpty
+                : error.isNotEmpty && orders.isEmpty
                     ? Center(child: Text(error))
                     : orders.isEmpty
                         ? const Center(child: Text("No active orders"))
@@ -181,42 +196,65 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                               itemCount: orders.length,
                               itemBuilder: (context, i) {
                                 final order = orders[i];
+                                final status = order["status"] ?? "";
+                                final vendorName =
+                                    order["vendor"]?["businessName"] ??
+                                        order["vendor"]?["name"] ??
+                                        "Vendor";
 
                                 return Card(
                                   margin: const EdgeInsets.symmetric(
                                       horizontal: 14, vertical: 8),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(14)),
                                   child: Padding(
-                                    padding: const EdgeInsets.all(12),
+                                    padding: const EdgeInsets.all(14),
                                     child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                        Text(
-                                          "Order #${order["_id"]}",
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.bold),
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text(
+                                              vendorName,
+                                              style: const TextStyle(
+                                                  fontWeight:
+                                                      FontWeight.bold,
+                                                  fontSize: 15),
+                                            ),
+                                            _statusChip(status),
+                                          ],
                                         ),
                                         const SizedBox(height: 4),
-                                        Text("Status: ${order["status"]}"),
-                                        const SizedBox(height: 10),
+                                        Text(
+                                          "₦${order["total"] ?? 0}  •  ${order["items"]?.length ?? 0} item(s)",
+                                          style: const TextStyle(
+                                              color: Colors.grey,
+                                              fontSize: 13),
+                                        ),
+                                        const SizedBox(height: 12),
                                         buildActionButtons(order),
                                         const SizedBox(height: 6),
                                         Align(
-                                          alignment: Alignment.centerRight,
+                                          alignment:
+                                              Alignment.centerRight,
                                           child: TextButton(
-                                            onPressed: () {
-                                              Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                  builder: (_) =>
-                                                      ActiveOrderScreen(
-                                                          order: order),
-                                                ),
-                                              );
-                                            },
-                                            child: const Text("View Details"),
+                                            onPressed: () =>
+                                                Navigator.push(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder: (_) =>
+                                                    ActiveOrderScreen(
+                                                        order: order),
+                                              ),
+                                            ),
+                                            child: const Text(
+                                                "View Details"),
                                           ),
-                                        )
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -226,6 +264,33 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                           ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _statusChip(String status) {
+    final color = {
+          "rider_assigned": Colors.blue,
+          "arrived_at_pickup": Colors.orange,
+          "picked_up": Colors.indigo,
+          "on_the_way": Colors.green,
+          "delivered": Colors.grey,
+        }[status] ??
+        Colors.grey;
+
+    final label = status.replaceAll("_", " ");
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color, width: 1),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+            color: color, fontSize: 11, fontWeight: FontWeight.w600),
       ),
     );
   }

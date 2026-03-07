@@ -25,12 +25,18 @@ class _CustomerSearchState extends State<CustomerSearch> {
   }
 
   Future<void> _loadVendors() async {
-    final vendors = await CustomerVendorService.getVendors();
-    setState(() {
-      _allVendors = vendors;
-      _filteredVendors = vendors;
-      _loading = false;
-    });
+    try {
+      final vendors = await CustomerVendorService.getVendors();
+      if (!mounted) return;
+      setState(() {
+        _allVendors = vendors;
+        _filteredVendors = vendors;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
   }
 
   void _onSearch(String query) {
@@ -43,6 +49,12 @@ class _CustomerSearchState extends State<CustomerSearch> {
     });
   }
 
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+  
   @override
   Widget build(BuildContext context) {
     return Scaffold(

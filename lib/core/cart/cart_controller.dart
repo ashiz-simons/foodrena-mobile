@@ -18,17 +18,13 @@ class CartController extends ChangeNotifier {
   bool get isEmpty => _items.isEmpty;
 
   double get total {
-    return _items.fold(
-      0,
-      (sum, e) => sum + (e.item.price * e.quantity),
-    );
+    return _items.fold(0, (sum, e) => sum + (e.item.price * e.quantity));
   }
 
   void add(MenuItem item, String vendorId) {
     if (_vendorId != null && _vendorId != vendorId) {
       _items.clear();
     }
-
     _vendorId = vendorId;
 
     final index = _items.indexWhere((e) => e.item.id == item.id);
@@ -37,7 +33,28 @@ class CartController extends ChangeNotifier {
     } else {
       _items.add(CartEntry(item: item));
     }
+    notifyListeners();
+  }
 
+  // Decrease quantity by 1, remove if it hits 0
+  void remove(String itemId) {
+    final index = _items.indexWhere((e) => e.item.id == itemId);
+    if (index < 0) return;
+
+    if (_items[index].quantity > 1) {
+      _items[index].quantity--;
+    } else {
+      _items.removeAt(index);
+    }
+
+    if (_items.isEmpty) _vendorId = null;
+    notifyListeners();
+  }
+
+  // Remove item entirely regardless of quantity
+  void removeAll(String itemId) {
+    _items.removeWhere((e) => e.item.id == itemId);
+    if (_items.isEmpty) _vendorId = null;
     notifyListeners();
   }
 

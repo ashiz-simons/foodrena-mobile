@@ -2,76 +2,118 @@ import 'package:socket_io_client/socket_io_client.dart' as IO;
 import '../utils/session.dart';
 
 class SocketService {
-  static IO.Socket? socket;
+  // ✅ Fixed: points to Render backend, no longer uses local IP
+  static const String socketUrl = String.fromEnvironment(
+    "SOCKET_URL",
+    defaultValue: "https://foodrena-backend-1.onrender.com",
+  );
 
-  static Future<void> connect(String riderId) async {
-    if (socket != null && socket!.connected) return;
+  static IO.Socket? _socket;
+  static bool _isConnecting = false;
+  static String? _currentRoom;
+
+  static bool get isConnected => _socket?.connected ?? false;
+
+  /// ===============================
+  /// CONNECT GENERIC
+  /// ===============================
+  static Future<void> connectToRoom(String room) async {
+    if (_socket != null && _socket!.connected) {
+      _joinRoom(room);
+      return;
+    }
+
+    if (_isConnecting) return;
+    _isConnecting = true;
 
     final token = await Session.getToken();
+    if (token == null) {
+      _isConnecting = false;
+      return;
+    }
 
-    socket = IO.io(
-      "http://10.0.2.2:4000",
+    _socket = IO.io(
+      socketUrl,
       IO.OptionBuilder()
           .setTransports(['websocket'])
           .setAuth({"token": token})
           .enableReconnection()
+          .setReconnectionAttempts(20)
+          .setReconnectionDelay(2000)
           .disableAutoConnect()
           .build(),
     );
 
-    socket!.connect();
+    _socket!.connect();
 
-    socket!.onConnect((_) {
-      print("🟢 Rider socket connected");
-      socket!.emit("joinRoom", "rider_$riderId");
+    _socket!.onConnect((_) {
+      _isConnecting = false;
+      _joinRoom(room);
+      print("🟢 Socket connected");
     });
+
+    _socket!.onReconnect((_) {
+      print("♻️ Reconnected");
+      if (_currentRoom != null) _joinRoom(_currentRoom!);
+    });
+
+    _socket!.onDisconnect((_) {
+      print("🔴 Disconnected");
+      _isConnecting = false;
+    });
+
+    _socket!.onConnectError((err) {
+      print("❌ Connect error: $err");
+      _isConnecting = false;
+    });
+  }
+
+  /// ===============================
+  /// JOIN ROOM SAFE
+  /// ===============================
+  static void _joinRoom(String room) {
+    if (_socket == null || !_socket!.connected) return;
+    if (_currentRoom == room) return;
+    _currentRoom = room;
+    _socket!.emit("joinRoom", room);
+    print("📡 Joined $room");
+  }
+
+  /// ===============================
+  /// SAFE EMIT
+  /// ===============================
+  static void emit(String event, dynamic data) {
+    if (_socket == null || !_socket!.connected) {
+      print("⚠️ Emit blocked — socket not connected");
+      return;
+    }
+    _socket!.emit(event, data);
+  }
+
+  /// ===============================
+  /// SAFE LISTENER
+  /// ===============================
+  static void on(String event, Function(dynamic) handler) {
+    if (_socket == null) return;
+    _socket!.off(event);
+    _socket!.on(event, handler);
+  }
+
+  static void off(String event) => _socket?.off(event);
+
+  /// ===============================
+  /// CLEAN DESTROY
+  /// ===============================
+  static void disconnect() {
+    _socket?.clearListeners();
+    _socket?.disconnect();
+    _socket?.dispose();
+    _socket = null;
+    _currentRoom = null;
+    print("🛑 Socket destroyed");
   }
 
   static Future<void> connectVendor(String vendorId) async {
-    if (socket != null && socket!.connected) return;
-
-    final token = await Session.getToken();
-
-    socket = IO.io(
-      "http://10.0.2.2:4000",
-      IO.OptionBuilder()
-          .setTransports(['websocket'])
-          .setAuth({"token": token})
-          .enableReconnection()
-          .disableAutoConnect()
-          .build(),
-    );
-
-    socket!.connect();
-
-    socket!.onConnect((_) {
-      print("🟢 Vendor socket connected");
-      socket!.emit("joinRoom", "vendor_$vendorId");
-    });
+    await connectToRoom("vendor_$vendorId");
   }
-
-  static void on(String event, Function(dynamic) handler) {
-    if (socket == null) return;
-    socket!.on(event, handler);
-  }
-
-  static void disconnect() {
-    socket?.disconnect();
-    socket = null;
-  }
-
-  static void sendLocation({
-    required String riderId,
-    required double lat,
-    required double lng,
-  }) {
-    if (socket == null || !socket!.connected) return;
-
-    socket!.emit("rider_location_update", {
-      "riderId": riderId,
-      "lat": lat,
-      "lng": lng,
-    });
-  }
-
 }

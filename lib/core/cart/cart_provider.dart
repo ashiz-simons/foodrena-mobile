@@ -9,9 +9,13 @@ class CartProvider extends InheritedNotifier<CartController> {
   }) : super(notifier: controller, child: child);
 
   static CartController of(BuildContext context) {
-    final CartProvider? provider =
+    final provider =
         context.dependOnInheritedWidgetOfExactType<CartProvider>();
-    assert(provider != null, 'No CartProvider found in context');
-    return provider!.notifier!;
+
+    if (provider == null || provider.notifier == null) {
+      throw FlutterError('CartProvider not found in widget tree');
+    }
+
+    return provider.notifier!;
   }
 }

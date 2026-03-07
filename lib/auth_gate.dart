@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'utils/session.dart';
 import 'screens/auth/login_screen.dart';
-import 'screens/auth/role_router.dart';
+import 'core/role_router.dart';
+import 'core/cart/cart_provider.dart';
+import 'core/cart/cart_controller.dart';
 
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
@@ -11,6 +13,8 @@ class AuthGate extends StatefulWidget {
 }
 
 class _AuthGateState extends State<AuthGate> {
+  CartController? _CartController;
+
   bool loading = true;
   bool loggedIn = false;
 
@@ -22,13 +26,22 @@ class _AuthGateState extends State<AuthGate> {
 
   Future<void> _checkAuth() async {
     final token = await Session.getToken();
+
+    if (!mounted) return;
+
     setState(() {
       loggedIn = token != null;
+
+      if (loggedIn) {
+        _CartController = CartController();
+      } else {
+        _CartController = null;
+      }
+
       loading = false;
     });
   }
 
-  /// 🔑 THIS IS THE MAGIC
   void refreshAuth() {
     setState(() {
       loading = true;
@@ -44,8 +57,17 @@ class _AuthGateState extends State<AuthGate> {
       );
     }
 
-    return loggedIn
-        ? RoleRouter(onLogout: refreshAuth)
-        : LoginScreen(onLogin: refreshAuth);
+    return loggedIn && _CartController != null
+        ? CartProvider(
+          controller: _CartController!,
+          child: RoleRouter(
+            key: const ValueKey("roleRouter"),
+            onLogout: refreshAuth,
+          ),
+        )
+        : LoginScreen(
+            key: const ValueKey("loginScreen"),
+            onLogin: refreshAuth,
+          );
   }
 }

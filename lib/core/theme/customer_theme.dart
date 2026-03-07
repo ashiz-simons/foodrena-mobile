@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 class CustomerColors {
-  static const primary = Color(0xFFDC2626); // 🔴 red from HTML
-  static const background = Color(0xFFFFFFFF);
-  static const surface = Color(0xFFF9FAFB);
+  static const primary = Color(0xFFDC2626); // 🔴 red
+  static const background = Color(0xFFFFF0F0); // milky red background
+  static const surface = Color(0xFFFFFFFF);    // white for cards/tabs
   static const textPrimary = Color(0xFF111827);
   static const textMuted = Color(0xFF6B7280);
 }

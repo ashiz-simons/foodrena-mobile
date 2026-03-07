@@ -41,7 +41,7 @@ class _VendorOrdersScreenState extends State<VendorOrdersScreen> {
 
   @override
     void dispose() {
-    SocketService.socket?.off("new_order");
+    SocketService.off("new_order");
     super.dispose();
     }
 
