@@ -5,6 +5,8 @@ import '../../services/api_service.dart';
 import '../../services/order_service.dart';
 import 'payment_screen.dart';
 import 'order_status_screen.dart';
+import 'delivery_address_screen.dart';
+import '../../core/theme/customer_theme.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({super.key});
@@ -16,6 +18,7 @@ class CartScreen extends StatefulWidget {
 class _CartScreenState extends State<CartScreen> {
   late Future<List<Map<String, dynamic>>> _activeOrdersFuture;
   bool _checkingOut = false;
+  Map<String, dynamic>? _deliveryAddress;
 
   @override
   void initState() {
@@ -23,9 +26,29 @@ class _CartScreenState extends State<CartScreen> {
     _activeOrdersFuture = OrderService.fetchActiveOrders();
   }
 
+  Future<void> _pickAddress() async {
+    final result = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(builder: (_) => const DeliveryAddressScreen()),
+    );
+    if (result != null) {
+      setState(() => _deliveryAddress = result);
+    }
+  }
+
   Future<void> _checkout(CartController cart) async {
     if (_checkingOut) return;
     if (cart.vendorId == null) return;
+
+    // Require address before checkout
+    if (_deliveryAddress == null) {
+      final result = await Navigator.push<Map<String, dynamic>>(
+        context,
+        MaterialPageRoute(builder: (_) => const DeliveryAddressScreen()),
+      );
+      if (result == null) return; // user cancelled
+      setState(() => _deliveryAddress = result);
+    }
 
     setState(() => _checkingOut = true);
 
@@ -40,7 +63,17 @@ class _CartScreenState extends State<CartScreen> {
                     "quantity": e.quantity,
                   })
               .toList(),
-          "deliveryAddress": "User default address",
+          "deliveryAddress": {
+            "street": _deliveryAddress!['street'] ?? '',
+            "city": _deliveryAddress!['city'] ?? '',
+            "state": _deliveryAddress!['area'] ?? '',
+            "lat": _deliveryAddress!['lat'],
+            "lng": _deliveryAddress!['lng'],
+          },
+          "deliveryLocation": {
+            "lat": _deliveryAddress!['lat'],
+            "lng": _deliveryAddress!['lng'],
+          },
         },
       );
 
@@ -66,10 +99,6 @@ class _CartScreenState extends State<CartScreen> {
       }
 
       final reference = paymentInit["reference"] as String;
-
-      // ✅ Clear cart immediately before navigating to payment
-      // This avoids relying on PaymentScreen returning true (which breaks
-      // when using pushReplacement to OrderStatusScreen)
       cart.clear();
 
       if (!mounted) return;
@@ -86,7 +115,6 @@ class _CartScreenState extends State<CartScreen> {
       );
     } catch (e) {
       if (mounted) {
-        // Restore cart isn't possible here, just show the error
         _showError(e.toString().replaceAll("Exception: ", ""));
       }
     } finally {
@@ -139,6 +167,7 @@ class _CartScreenState extends State<CartScreen> {
       ),
       body: Column(
         children: [
+          // Active order banner
           FutureBuilder<List<Map<String, dynamic>>>(
             future: _activeOrdersFuture,
             builder: (context, snapshot) {
@@ -274,6 +303,7 @@ class _CartScreenState extends State<CartScreen> {
                     ),
                   ),
 
+                  // Delivery address + checkout footer
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -285,40 +315,103 @@ class _CartScreenState extends State<CartScreen> {
                             offset: const Offset(0, -4)),
                       ],
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        // Delivery address row
+                        GestureDetector(
+                          onTap: _pickAddress,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF7F7F7),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: _deliveryAddress != null
+                                    ? CustomerColors.primary
+                                    : Colors.grey.shade300,
+                                width: 1.5,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.location_on_outlined,
+                                  color: _deliveryAddress != null
+                                      ? CustomerColors.primary
+                                      : Colors.grey,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _deliveryAddress != null
+                                        ? _deliveryAddress!['fullAddress']
+                                        : 'Add delivery address',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: _deliveryAddress != null
+                                          ? Colors.black87
+                                          : Colors.grey,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.edit_outlined,
+                                  color: Colors.grey.shade400,
+                                  size: 16,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text("Total",
-                                style: TextStyle(color: Colors.grey)),
-                            Text(
-                              "₦${cart.total.toStringAsFixed(0)}",
-                              style: const TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text("Subtotal",
+                                    style: TextStyle(
+                                        color: Colors.grey, fontSize: 12)),
+                                Text(
+                                  "₦${cart.total.toStringAsFixed(0)}",
+                                  style: const TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                                const Text("+ delivery fee at checkout",
+                                    style: TextStyle(
+                                        color: Colors.grey, fontSize: 11)),
+                              ],
+                            ),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 28, vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                              ),
+                              onPressed: _checkingOut
+                                  ? null
+                                  : () => _checkout(cart),
+                              child: _checkingOut
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white),
+                                    )
+                                  : const Text("Checkout",
+                                      style: TextStyle(fontSize: 16)),
                             ),
                           ],
-                        ),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 28, vertical: 14),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                          ),
-                          onPressed:
-                              _checkingOut ? null : () => _checkout(cart),
-                          child: _checkingOut
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2, color: Colors.white),
-                                )
-                              : const Text("Checkout",
-                                  style: TextStyle(fontSize: 16)),
                         ),
                       ],
                     ),

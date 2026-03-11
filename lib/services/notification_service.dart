@@ -3,12 +3,10 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'notification_store.dart';
 
-/// Background message handler — must be top-level function
 @pragma('vm:entry-point')
 Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
-  // No need to show notification here — FCM shows it automatically
-  // when app is in background/terminated
   debugPrint('📬 Background message: ${message.notification?.title}');
 }
 
@@ -16,7 +14,6 @@ class NotificationService {
   static final _messaging = FirebaseMessaging.instance;
   static final _localNotifications = FlutterLocalNotificationsPlugin();
 
-  // Channel for Android
   static const _channel = AndroidNotificationChannel(
     'foodrena_default',
     'Foodrena Notifications',
@@ -25,12 +22,9 @@ class NotificationService {
     playSound: true,
   );
 
-  /// Call once from main.dart after login
   static Future<void> init(BuildContext context) async {
-    // Register background handler
     FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
 
-    // Request permission (iOS + Android 13+)
     final settings = await _messaging.requestPermission(
       alert: true,
       badge: true,
@@ -42,13 +36,11 @@ class NotificationService {
       return;
     }
 
-    // Create Android notification channel
     await _localNotifications
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(_channel);
 
-    // Init local notifications (for foreground display)
     await _localNotifications.initialize(
       const InitializationSettings(
         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
@@ -59,43 +51,56 @@ class NotificationService {
       },
     );
 
-    // Get and save FCM token
+    // Load persisted notifications on start
+    await NotificationStore.instance.load();
+
     await _saveToken();
 
-    // Token refresh — save new token when it changes
     _messaging.onTokenRefresh.listen((token) async {
       await _sendTokenToBackend(token);
     });
 
-    // Foreground messages — show local notification
+    // Foreground messages
     FirebaseMessaging.onMessage.listen((message) {
       _showLocalNotification(message);
+      _saveToStore(message);
     });
 
-    // App opened from notification (background state)
+    // App opened from background notification
     FirebaseMessaging.onMessageOpenedApp.listen((message) {
-      _handleNotificationTap(
-        jsonEncode(message.data),
-        context,
-      );
+      _saveToStore(message);
+      _handleNotificationTap(jsonEncode(message.data), context);
     });
 
-    // App opened from terminated state via notification
+    // App opened from terminated state
     final initial = await _messaging.getInitialMessage();
     if (initial != null) {
-      // Small delay to let the widget tree build
+      _saveToStore(initial);
       Future.delayed(const Duration(milliseconds: 500), () {
         _handleNotificationTap(jsonEncode(initial.data), context);
       });
     }
   }
 
+  static void _saveToStore(RemoteMessage message) {
+    final notification = message.notification;
+    if (notification == null) return;
+
+    NotificationStore.instance.add(AppNotification(
+      id: message.messageId ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      title: notification.title ?? '',
+      body: notification.body ?? '',
+      orderId: message.data['orderId'],
+      type: message.data['type'],
+      receivedAt: DateTime.now(),
+      isRead: false,
+    ));
+  }
+
   static Future<void> _saveToken() async {
     try {
       final token = await _messaging.getToken();
-      if (token != null) {
-        await _sendTokenToBackend(token);
-      }
+      if (token != null) await _sendTokenToBackend(token);
     } catch (e) {
       debugPrint('FCM token error: $e');
     }
@@ -139,23 +144,15 @@ class NotificationService {
 
   static void _handleNotificationTap(String? payload, BuildContext context) {
     if (payload == null) return;
-
     try {
       final data = jsonDecode(payload) as Map<String, dynamic>;
       final type = data['type'] as String?;
       final orderId = data['orderId'] as String?;
 
-      // Navigate based on notification type
-      // The Navigator will be available since app is fully loaded
       switch (type) {
-        case 'new_order':
-          // Vendor or rider — go to orders screen
-          // handled by the respective home screens listening to socket
-          break;
         case 'order_status':
           if (orderId != null) {
             // Navigate to order status screen
-            // You can use a global navigator key here if needed
           }
           break;
         default:

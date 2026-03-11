@@ -1,19 +1,25 @@
 import 'package:flutter/material.dart';
 import '../../utils/session.dart';
 
+const _kBlue = Color(0xFF1E3A5F);
+const _kBlueLight = Color(0xFF2D5986);
+
 class DeliveryModeScreen extends StatelessWidget {
   const DeliveryModeScreen({super.key});
 
   Future<void> _selectMode(BuildContext context, String mode) async {
     await Session.saveDeliveryMode(mode);
-
     Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Choose delivery mode")),
+      appBar: AppBar(
+        title: const Text("Choose delivery mode"),
+        backgroundColor: _kBlue,
+        foregroundColor: Colors.white,
+      ),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -62,7 +68,14 @@ class DeliveryModeScreen extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(icon, size: 36),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _kBlue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, size: 32, color: _kBlue),
+            ),
             const SizedBox(width: 16),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,

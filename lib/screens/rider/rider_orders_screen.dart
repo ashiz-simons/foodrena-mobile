@@ -22,11 +22,9 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
     super.initState();
     loadOrders();
 
-    // When backend assigns this rider a new order, show the banner
     SocketService.on("new_order", (data) {
       if (!mounted) return;
       setState(() => hasNewOrders = true);
-      // Auto-refresh so the new order appears immediately
       loadOrders();
     });
   }
@@ -80,7 +78,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
     final status = (order["status"] ?? "").toString();
 
     switch (status) {
-      // ── Step 1: Rider is assigned → Accept or Reject ──
       case "rider_assigned":
         return Row(
           children: [
@@ -110,7 +107,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
           ],
         );
 
-      // ── Step 2: Rider accepted → now at vendor, confirm arrival ──
       case "arrived_at_pickup":
         return SizedBox(
           width: double.infinity,
@@ -125,7 +121,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
           ),
         );
 
-      // ── Step 3: Arrived → pick up the food ──
       case "picked_up":
         return SizedBox(
           width: double.infinity,
@@ -140,7 +135,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
           ),
         );
 
-      // ── Step 4: On the way → complete delivery ──
       case "on_the_way":
         return SizedBox(
           width: double.infinity,
@@ -201,6 +195,17 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                                     order["vendor"]?["businessName"] ??
                                         order["vendor"]?["name"] ??
                                         "Vendor";
+                                final customerName =
+                                    order["user"]?["name"] ?? "Customer";
+                                final _addr = order["deliveryAddress"];
+                                String deliveryAddress = "";
+                                if (_addr is Map) {
+                                  final parts = [_addr['street'], _addr['state'], _addr['city']]
+                                      .where((p) => p != null && p.toString().isNotEmpty).toList();
+                                  deliveryAddress = parts.join(', ');
+                                } else if (_addr is String) {
+                                  deliveryAddress = _addr;
+                                }
 
                                 return Card(
                                   margin: const EdgeInsets.symmetric(
@@ -214,6 +219,7 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
+                                        // Header row
                                         Row(
                                           mainAxisAlignment:
                                               MainAxisAlignment.spaceBetween,
@@ -221,14 +227,60 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                                             Text(
                                               vendorName,
                                               style: const TextStyle(
-                                                  fontWeight:
-                                                      FontWeight.bold,
+                                                  fontWeight: FontWeight.bold,
                                                   fontSize: 15),
                                             ),
                                             _statusChip(status),
                                           ],
                                         ),
+                                        const SizedBox(height: 8),
+
+                                        // Customer name
+                                        Row(
+                                          children: [
+                                            const Icon(Icons.person_outline,
+                                                size: 15,
+                                                color: Colors.grey),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              customerName,
+                                              style: const TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight:
+                                                      FontWeight.w600),
+                                            ),
+                                          ],
+                                        ),
                                         const SizedBox(height: 4),
+
+                                        // Delivery address
+                                        if (deliveryAddress
+                                            .toString()
+                                            .isNotEmpty)
+                                          Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              const Icon(
+                                                  Icons.location_on_outlined,
+                                                  size: 15,
+                                                  color: Colors.orange),
+                                              const SizedBox(width: 4),
+                                              Expanded(
+                                                child: Text(
+                                                  deliveryAddress.toString(),
+                                                  style: const TextStyle(
+                                                      fontSize: 12,
+                                                      color: Colors.black87),
+                                                  maxLines: 2,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        const SizedBox(height: 4),
+
                                         Text(
                                           "₦${order["total"] ?? 0}  •  ${order["items"]?.length ?? 0} item(s)",
                                           style: const TextStyle(
@@ -239,11 +291,9 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                                         buildActionButtons(order),
                                         const SizedBox(height: 6),
                                         Align(
-                                          alignment:
-                                              Alignment.centerRight,
+                                          alignment: Alignment.centerRight,
                                           child: TextButton(
-                                            onPressed: () =>
-                                                Navigator.push(
+                                            onPressed: () => Navigator.push(
                                               context,
                                               MaterialPageRoute(
                                                 builder: (_) =>
@@ -251,8 +301,8 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                                                         order: order),
                                               ),
                                             ),
-                                            child: const Text(
-                                                "View Details"),
+                                            child:
+                                                const Text("View Details"),
                                           ),
                                         ),
                                       ],
@@ -278,8 +328,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
         }[status] ??
         Colors.grey;
 
-    final label = status.replaceAll("_", " ");
-
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
@@ -288,7 +336,7 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
         border: Border.all(color: color, width: 1),
       ),
       child: Text(
-        label,
+        status.replaceAll("_", " "),
         style: TextStyle(
             color: color, fontSize: 11, fontWeight: FontWeight.w600),
       ),

@@ -1,16 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../utils/session.dart';
 import '../../services/api_service.dart';
 import '../../services/socket_service.dart';
 import '../../services/vendor_service.dart';
-import '../../widgets/app_drawer.dart';
 
 import 'vendor_orders_screen.dart';
 import 'vendor_menu_screen.dart';
 import 'vendor_profile_screen.dart';
 import 'vendor_wallet_screen.dart';
-import 'vendor_bank_screen.dart';
+
+// ── Palette ───────────────────────────────────────────────────────────────
+const _kBg      = Color(0xFFF0FAFA);
+const _kCard    = Color(0xFFFFFFFF);
+const _kCardAlt = Color(0xFFE0F7F7);
+const _kTeal    = Color(0xFF00B4B4);
+const _kAmber   = Color(0xFFFFC542);
+const _kBlue    = Color(0xFF4A90E2);
+const _kRed     = Color(0xFFFF5B5B);
+const _kText    = Color(0xFF1A1A1A);
+const _kMuted   = Color(0xFF6B8A8A);
+const _kOpen    = Color(0xFF00C48C);
 
 class VendorHome extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -25,20 +36,24 @@ class VendorHome extends StatefulWidget {
 class _VendorHomeState extends State<VendorHome> {
   bool open = false;
   bool loading = true;
+  bool _toggling = false;
 
   int ordersToday = 0;
   int activeOrders = 0;
+  double rating = 0.0;
+  int ratingCount = 0;
+  String? logoUrl;
 
-  String? vendorId;   // ✅ Vendor._id — used for socket room
+  String? vendorId;
   String vendorName = "Vendor";
 
   @override
   void initState() {
     super.initState();
-    init();
+    _init();
   }
 
-  Future<void> init() async {
+  Future<void> _init() async {
     vendorName = await Session.getUserName() ?? "Vendor";
     await loadStats();
   }
@@ -48,19 +63,18 @@ class _VendorHomeState extends State<VendorHome> {
       final res = await ApiService.get("/vendors/dashboard");
       if (res != null && mounted) {
         setState(() {
-          ordersToday = res["ordersToday"] ?? 0;
+          ordersToday  = res["ordersToday"] ?? 0;
           activeOrders = res["activeOrders"] ?? 0;
-          open = res["isOpen"] ?? false;
-          // ✅ Get Vendor._id from dashboard response
-          vendorId = res["vendorId"]?.toString() ?? res["_id"]?.toString();
+          open         = res["isOpen"] ?? false;
+          vendorId     = res["vendorId"]?.toString() ?? res["_id"]?.toString();
+          rating       = (res["rating"] ?? 0).toDouble();
+          ratingCount  = (res["ratingCount"] ?? 0) as int;
+          logoUrl      = res["logo"]?["url"];
         });
-      }
-
-      // ✅ Connect socket as soon as vendor loads — not just when toggling open
-      // Vendor needs to receive new_order notifications at all times
-      if (vendorId != null) {
-        await SocketService.connectToRoom("vendor_$vendorId");
-        _listenForOrders();
+        if (vendorId != null) {
+          await SocketService.connectToRoom("vendor_$vendorId");
+          _listenForOrders();
+        }
       }
     } catch (e) {
       debugPrint("Vendor dashboard load failed: $e");
@@ -71,36 +85,33 @@ class _VendorHomeState extends State<VendorHome> {
   void _listenForOrders() {
     SocketService.on("new_order", (data) {
       if (!mounted) return;
-      // Show a notification banner
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Row(
-            children: [
-              Icon(Icons.notifications_active, color: Colors.white),
-              SizedBox(width: 10),
-              Text("New order received!"),
-            ],
-          ),
-          backgroundColor: Colors.blue,
+          content: const Row(children: [
+            Icon(Icons.notifications_active, color: Colors.white),
+            SizedBox(width: 10),
+            Text("New order received!"),
+          ]),
+          backgroundColor: _kTeal,
           duration: const Duration(seconds: 4),
           action: SnackBarAction(
             label: "View",
             textColor: Colors.white,
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => VendorOrdersScreen()),
-            ),
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => VendorOrdersScreen())),
           ),
         ),
       );
-      // Refresh stats
       loadStats();
     });
   }
 
   Future<void> toggleOpen(bool value) async {
-    setState(() => open = value);
+    if (_toggling) return;
+    HapticFeedback.mediumImpact();
+    setState(() { _toggling = true; open = value; });
     await VendorService.toggleAvailability(value);
+    setState(() => _toggling = false);
   }
 
   Future<void> logout() async {
@@ -109,172 +120,444 @@ class _VendorHomeState extends State<VendorHome> {
     widget.onLogout?.call();
   }
 
+  void _openProfile() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VendorProfileScreen(
+          onLogout: logout,
+          onRoleSwitch: widget.onRoleSwitch,
+        ),
+      ),
+    ).then((_) => loadStats());
+  }
+
   @override
   void dispose() {
     SocketService.off("new_order");
     super.dispose();
   }
 
+  String get _firstName => vendorName.split(' ').first;
+
+  String get _greeting {
+    final h = DateTime.now().hour;
+    if (h < 12) return "Good morning";
+    if (h < 17) return "Good afternoon";
+    return "Good evening";
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FA),
-      drawer: AppDrawer(
-        onRoleSwitch: widget.onRoleSwitch ?? () {},
-        onLogout: logout,
-      ),
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.blue,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Dashboard"),
-            Text("Welcome, $vendorName",
-                style: const TextStyle(fontSize: 13)),
-          ],
-        ),
-        actions: [
-          PopupMenuButton(
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: "profile", child: Text("Profile")),
-              PopupMenuItem(value: "wallet", child: Text("Wallet")),
-              PopupMenuItem(value: "bank", child: Text("Bank Details")),
-              PopupMenuItem(value: "menu", child: Text("Manage Menu")),
-              PopupMenuItem(value: "logout", child: Text("Logout")),
+    if (loading) {
+      return const Scaffold(
+        backgroundColor: _kBg,
+        body: Center(child: CircularProgressIndicator(color: _kTeal)),
+      );
+    }
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.dark,
+      child: Scaffold(
+        backgroundColor: _kBg,
+        body: RefreshIndicator(
+          color: _kTeal,
+          backgroundColor: _kCard,
+          onRefresh: loadStats,
+          child: CustomScrollView(
+            slivers: [
+              _buildHeader(),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 40),
+                  child: Column(
+                    children: [
+                      _storeToggleCard(),
+                      const SizedBox(height: 20),
+                      _statsRow(),
+                      const SizedBox(height: 28),
+                      _sectionLabel("QUICK ACTIONS"),
+                      const SizedBox(height: 14),
+                      _actionCard(
+                        icon: Icons.receipt_long_rounded,
+                        title: "View Orders",
+                        subtitle: "$activeOrders active right now",
+                        accent: _kTeal,
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => VendorOrdersScreen())),
+                      ),
+                      const SizedBox(height: 12),
+                      _actionCard(
+                        icon: Icons.restaurant_menu_rounded,
+                        title: "Manage Menu",
+                        subtitle: "Add, edit or remove dishes",
+                        accent: _kBlue,
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => const VendorMenuScreen())),
+                      ),
+                      const SizedBox(height: 12),
+                      _actionCard(
+                        icon: Icons.account_balance_wallet_rounded,
+                        title: "Wallet & Earnings",
+                        subtitle: "Check your balance",
+                        accent: _kAmber,
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => const VendorWalletScreen())),
+                      ),
+                      const SizedBox(height: 12),
+                      _actionCard(
+                        icon: Icons.person_rounded,
+                        title: "My Profile",
+                        subtitle: "Logo, bank details & role switch",
+                        accent: _kMuted,
+                        onTap: _openProfile,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ],
-            onSelected: (value) {
-              if (value == "profile") {
-                Navigator.push(context,
-                    MaterialPageRoute(
-                        builder: (_) => const VendorProfileScreen()));
-              } else if (value == "wallet") {
-                Navigator.push(context,
-                    MaterialPageRoute(
-                        builder: (_) => const VendorWalletScreen()));
-              } else if (value == "bank") {
-                Navigator.push(context,
-                    MaterialPageRoute(
-                        builder: (_) => const VendorBankScreen()));
-              } else if (value == "menu") {
-                Navigator.push(context,
-                    MaterialPageRoute(
-                        builder: (_) => const VendorMenuScreen()));
-              } else {
-                logout();
-              }
-            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── HEADER ────────────────────────────────────────────────────────────────
+  Widget _buildHeader() {
+    return SliverToBoxAdapter(
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Logo avatar → profile
+              GestureDetector(
+                onTap: _openProfile,
+                child: Stack(
+                  children: [
+                    Container(
+                      width: 58,
+                      height: 58,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: open ? _kOpen : _kMuted.withOpacity(0.4),
+                          width: 2.5,
+                        ),
+                      ),
+                      child: ClipOval(
+                        child: logoUrl != null
+                            ? Image.network(logoUrl!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => _avatarPlaceholder())
+                            : _avatarPlaceholder(),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 2,
+                      right: 2,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: open ? _kOpen : _kMuted.withOpacity(0.5),
+                          border: Border.all(color: _kBg, width: 2),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 14),
+
+              // Greeting + name + rating
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_greeting,
+                        style: const TextStyle(
+                            color: _kMuted, fontSize: 12, letterSpacing: 0.3)),
+                    const SizedBox(height: 2),
+                    Text(_firstName,
+                        style: const TextStyle(
+                            color: _kText,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.4)),
+                    const SizedBox(height: 4),
+                    if (rating > 0)
+                      Row(children: [
+                        const Icon(Icons.star_rounded, color: _kAmber, size: 13),
+                        const SizedBox(width: 3),
+                        Text(rating.toStringAsFixed(1),
+                            style: const TextStyle(
+                                color: _kAmber,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 4),
+                        Text(
+                          "($ratingCount ${ratingCount == 1 ? 'rating' : 'ratings'})",
+                          style: const TextStyle(color: _kMuted, fontSize: 11),
+                        ),
+                      ])
+                    else
+                      const Text("No ratings yet",
+                          style: TextStyle(color: _kMuted, fontSize: 11)),
+                  ],
+                ),
+              ),
+
+              // Notifications
+              IconButton(
+                onPressed: () {},
+                icon: const Icon(Icons.notifications_outlined,
+                    color: _kText, size: 22),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _avatarPlaceholder() => Container(
+        color: _kCardAlt,
+        child: const Icon(Icons.storefront_rounded, color: _kTeal, size: 28),
+      );
+
+  // ── STORE TOGGLE ──────────────────────────────────────────────────────────
+  Widget _storeToggleCard() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: open
+              ? [const Color(0xFFD4F5ED), const Color(0xFFBBEEE3)]
+              : [_kCard, _kCardAlt],
+        ),
+        border: Border.all(
+          color: open
+              ? _kOpen.withOpacity(0.4)
+              : Colors.teal.withOpacity(0.12),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: open
+                ? _kOpen.withOpacity(0.15)
+                : Colors.black.withOpacity(0.04),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: loadStats,
-              child: ListView(
-                padding: const EdgeInsets.all(20),
-                children: [
-                  _availabilityCard(),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      _statCard("Orders Today", ordersToday.toString()),
-                      const SizedBox(width: 12),
-                      _statCard("Active Orders", activeOrders.toString()),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  _actionTile(
-                    icon: Icons.receipt_long,
-                    title: "View Orders",
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => VendorOrdersScreen()),
-                    ),
-                  ),
-                  _actionTile(
-                    icon: Icons.restaurant_menu,
-                    title: "Manage Menu",
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => const VendorMenuScreen()),
-                    ),
-                  ),
-                ],
-              ),
+      child: Row(
+        children: [
+          Container(
+            width: 14,
+            height: 14,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: open ? _kOpen : _kMuted.withOpacity(0.4),
+              boxShadow: open
+                  ? [BoxShadow(
+                      color: _kOpen.withOpacity(0.5), blurRadius: 8)]
+                  : [],
             ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  open ? "Store is Open" : "Store is Closed",
+                  style: TextStyle(
+                    color: open ? _kOpen : _kText,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  open
+                      ? "Accepting orders from customers"
+                      : "Toggle to start accepting orders",
+                  style: const TextStyle(color: _kMuted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          _toggling
+              ? const SizedBox(
+                  width: 36,
+                  height: 20,
+                  child: Center(
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: _kTeal),
+                    ),
+                  ),
+                )
+              : GestureDetector(
+                  onTap: () => toggleOpen(!open),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    width: 52,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      color: open ? _kOpen : _kMuted.withOpacity(0.3),
+                    ),
+                    child: AnimatedAlign(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                      alignment: open
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      child: Container(
+                        margin: const EdgeInsets.all(3),
+                        width: 22,
+                        height: 22,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+        ],
+      ),
     );
   }
 
-  Widget _availabilityCard() {
+  // ── STATS ─────────────────────────────────────────────────────────────────
+  Widget _statsRow() {
+    return Row(
+      children: [
+        Expanded(child: _statCard(
+          label: "Orders Today",
+          value: ordersToday.toString(),
+          icon: Icons.receipt_long_rounded,
+          accent: _kTeal,
+        )),
+        const SizedBox(width: 14),
+        Expanded(child: _statCard(
+          label: "Active Orders",
+          value: activeOrders.toString(),
+          icon: Icons.local_fire_department_rounded,
+          accent: _kAmber,
+        )),
+      ],
+    );
+  }
+
+  Widget _statCard({
+    required String label,
+    required String value,
+    required IconData icon,
+    required Color accent,
+  }) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: open ? Colors.blue : Colors.grey.shade300,
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(.05),
-              blurRadius: 10,
-              offset: const Offset(0, 4))
-        ],
+        color: _kCard,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.teal.withOpacity(0.1)),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(open ? "Store is Open" : "Store is Closed",
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: accent.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: accent, size: 18),
+          ),
+          const SizedBox(height: 14),
+          Text(value,
               style: const TextStyle(
-                  fontSize: 18, fontWeight: FontWeight.bold)),
-          Switch(value: open, onChanged: toggleOpen),
+                  color: _kText,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.5)),
+          const SizedBox(height: 4),
+          Text(label, style: const TextStyle(color: _kMuted, fontSize: 11)),
         ],
       ),
     );
   }
 
-  Widget _statCard(String title, String value) {
-    return Expanded(
+  Widget _sectionLabel(String text) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(text,
+          style: const TextStyle(
+              color: _kMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.4)),
+    );
+  }
+
+  Widget _actionCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Color accent,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: () { HapticFeedback.selectionClick(); onTap(); },
       child: Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(.04),
-                blurRadius: 10,
-                offset: const Offset(0, 4))
-          ],
+          color: _kCard,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.teal.withOpacity(0.1)),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            Text(title, style: const TextStyle(color: Colors.grey)),
-            const SizedBox(height: 6),
-            Text(value,
-                style: const TextStyle(
-                    fontSize: 22, fontWeight: FontWeight.bold)),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: accent.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, color: accent, size: 22),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          color: _kText,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 3),
+                  Text(subtitle,
+                      style: const TextStyle(color: _kMuted, fontSize: 12)),
+                ],
+              ),
+            ),
+            Icon(Icons.arrow_forward_ios_rounded, size: 14, color: _kMuted),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _actionTile(
-      {required IconData icon,
-      required String title,
-      required VoidCallback onTap}) {
-    return Card(
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 2,
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: Icon(icon, color: Colors.blue),
-        title: Text(title),
-        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-        onTap: onTap,
       ),
     );
   }

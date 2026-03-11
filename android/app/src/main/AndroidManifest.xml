@@ -16,6 +16,7 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -46,6 +47,11 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@mipmap/ic_launcher" />
+
+         <meta-data
+                android:name="io.flutter.embedding.android.EnableImpeller"
+                android:value="false" 
+            />
 
     </application>
 

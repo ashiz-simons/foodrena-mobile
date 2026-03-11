@@ -1,30 +1,83 @@
 import 'package:flutter/material.dart';
+import 'dart:math' as math;
 import '../../models/vendor_model.dart';
+import '../../utils/session.dart';
 import 'vendor_details_screen.dart';
 import '../../core/theme/customer_theme.dart';
 import '../../core/cart/cart_provider.dart';
 
-class AllVendorsScreen extends StatelessWidget {
+class AllVendorsScreen extends StatefulWidget {
   final List<Vendor> vendors;
 
   const AllVendorsScreen({super.key, required this.vendors});
 
   @override
+  State<AllVendorsScreen> createState() => _AllVendorsScreenState();
+}
+
+class _AllVendorsScreenState extends State<AllVendorsScreen> {
+  Map<String, double> _distanceCache = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _calculateDistances();
+  }
+
+  Future<void> _calculateDistances() async {
+    try {
+      final loc = await Session.getLocation();
+      if (loc == null) return;
+      final userLat = loc['lat'];
+      final userLng = loc['lng'];
+      if (userLat == null || userLng == null) return;
+      final cache = <String, double>{};
+      for (final v in widget.vendors) {
+        if (v.lat != null && v.lng != null) {
+          cache[v.id] = _haversine(userLat, userLng, v.lat!, v.lng!);
+        }
+      }
+      if (mounted) setState(() => _distanceCache = cache);
+    } catch (_) {}
+  }
+
+  double _haversine(double lat1, double lng1, double lat2, double lng2) {
+    const R = 6371.0;
+    final dLat = (lat2 - lat1) * math.pi / 180;
+    final dLng = (lng2 - lng1) * math.pi / 180;
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(lat1 * math.pi / 180) *
+            math.cos(lat2 * math.pi / 180) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+  }
+
+  String _formatDistance(double km) {
+    if (km < 1) return "${(km * 1000).round()}m away";
+    return "${km.toStringAsFixed(1)}km away";
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("All kitchens")),
-      body: vendors.isEmpty
+      body: widget.vendors.isEmpty
           ? const Center(child: Text("No vendors available"))
           : ListView.separated(
               padding: const EdgeInsets.all(16),
-              itemCount: vendors.length,
+              itemCount: widget.vendors.length,
               separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (_, i) => _vendorRow(context, vendors[i]),
+              itemBuilder: (_, i) => _vendorRow(context, widget.vendors[i]),
             ),
     );
   }
 
   Widget _vendorRow(BuildContext context, Vendor vendor) {
+    final rating = vendor.rating ?? 0.0;
+    final ratingCount = vendor.ratingCount ?? 0;
+    final distance = _distanceCache[vendor.id];
+
     return GestureDetector(
       onTap: () {
         if (!vendor.isOpen) {
@@ -51,9 +104,12 @@ class AllVendorsScreen extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.grey.shade200),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.04), blurRadius: 8),
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 8,
+                offset: const Offset(0, 3)),
           ],
         ),
         child: Row(
@@ -62,8 +118,8 @@ class AllVendorsScreen extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
               child: SizedBox(
-                width: 60,
-                height: 60,
+                width: 64,
+                height: 64,
                 child: vendor.logoUrl != null
                     ? Image.network(vendor.logoUrl!,
                         fit: BoxFit.cover,
@@ -82,29 +138,62 @@ class AllVendorsScreen extends StatelessWidget {
                   Text(vendor.businessName,
                       style: const TextStyle(
                           fontWeight: FontWeight.w600, fontSize: 15)),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 5),
                   Row(
                     children: [
-                      Icon(
-                        vendor.isOpen
-                            ? Icons.circle
-                            : Icons.circle_outlined,
-                        size: 10,
-                        color:
-                            vendor.isOpen ? Colors.green : Colors.red,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        vendor.isOpen ? "Open now" : "Closed",
-                        style: TextStyle(
-                          fontSize: 12,
+                      // Open/closed
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
                           color: vendor.isOpen
-                              ? Colors.green
-                              : Colors.red,
+                              ? Colors.green.shade50
+                              : Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          vendor.isOpen ? "Open" : "Closed",
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: vendor.isOpen
+                                ? Colors.green.shade700
+                                : Colors.red.shade700,
+                          ),
                         ),
                       ),
+                      // Rating
+                      if (rating > 0) ...[
+                        const SizedBox(width: 8),
+                        const Icon(Icons.star_rounded,
+                            color: Colors.amber, size: 13),
+                        const SizedBox(width: 2),
+                        Text(
+                          "${rating.toStringAsFixed(1)} ($ratingCount)",
+                          style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF1A1A1A)),
+                        ),
+                      ],
                     ],
                   ),
+                  // Distance
+                  if (distance != null) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(Icons.location_on_outlined,
+                            size: 12, color: Colors.grey.shade400),
+                        const SizedBox(width: 3),
+                        Text(
+                          _formatDistance(distance),
+                          style: TextStyle(
+                              fontSize: 11, color: Colors.grey.shade500),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -124,8 +213,7 @@ class _LogoPlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       color: Colors.grey.shade100,
-      child: const Icon(Icons.storefront,
-          color: Colors.grey, size: 28),
+      child: const Icon(Icons.storefront, color: Colors.grey, size: 28),
     );
   }
 }
