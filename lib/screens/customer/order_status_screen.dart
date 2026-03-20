@@ -2,22 +2,31 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../services/socket_service.dart';
 import '../../services/api_service.dart';
+import '../../services/customer_wallet_service.dart';
+import '../../services/notification_store.dart';
+import '../../core/theme/app_theme.dart';
+import '../shared/chat_screen.dart';
+import '../shared/incoming_call_screen.dart';
 
 class OrderStatusScreen extends StatefulWidget {
   final String orderId;
+  final VoidCallback? onDone;
 
-  const OrderStatusScreen({super.key, required this.orderId});
+  const OrderStatusScreen({super.key, required this.orderId, this.onDone});
 
   @override
   State<OrderStatusScreen> createState() => _OrderStatusScreenState();
 }
 
 class _OrderStatusScreenState extends State<OrderStatusScreen> {
-  String status = "accepted";
+  String status = "pending";
+  String _riderName = "Rider";
+  int _unreadCount = 0;
 
   GoogleMapController? mapController;
   Marker? riderMarker;
   LatLng? riderPosition;
+  bool _cancelling = false;
 
   @override
   void initState() {
@@ -28,6 +37,52 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
 
   Future<void> _connectAndListen() async {
     await SocketService.connectToRoom("order_${widget.orderId}");
+
+    // Listen for incoming calls
+    SocketService.on("call_invite", (data) {
+      if (!mounted) return;
+      final callOrderId = data["orderId"]?.toString() ?? "";
+      if (callOrderId != widget.orderId) return;
+
+      final callerName = data["callerName"] ?? "Rider";
+      final channelName = data["channelName"] ?? callOrderId;
+      final appId = data["appId"] ?? "e03b6ecb7bcf4e279d314411ec817e7e";
+      final token = data["token"];
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => IncomingCallScreen(
+            orderId:     callOrderId,
+            callerName:  callerName,
+            senderRole:  "customer",
+            channelName: channelName,
+            appId:       appId,
+            token:       token,
+          ),
+        ),
+      );
+    });
+
+    // Listen for incoming chat messages — show notification + increment badge
+    SocketService.on("receive_message", (data) {
+      if (!mounted) return;
+      final msgOrderId = data["orderId"]?.toString() ?? "";
+      if (msgOrderId != widget.orderId) return;
+      final senderRole = data["senderRole"] ?? "";
+      if (senderRole == "customer") return; // don't notify self
+
+      setState(() => _unreadCount++);
+
+      NotificationStore.instance.add(AppNotification(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        title: "New message from $_riderName",
+        body: data["text"] ?? "New message",
+        type: "chat",
+        receivedAt: DateTime.now(),
+      ));
+    });
 
     SocketService.on("order_status_update", (data) {
       if (!mounted) return;
@@ -71,10 +126,72 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     try {
       final res = await ApiService.get("/orders/${widget.orderId}");
       if (!mounted) return;
-      if (res is Map && res["status"] != null) {
-        setState(() => status = res["status"]);
+      if (res is Map) {
+        setState(() {
+          if (res["status"] != null) status = res["status"];
+          final rider = res["rider"];
+          if (rider is Map) {
+            _riderName = rider["user"]?["name"] ?? rider["name"] ?? "Rider";
+          }
+        });
       }
     } catch (_) {}
+  }
+
+  Future<void> _confirmCancel() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text("Cancel order?", style: TextStyle(fontWeight: FontWeight.bold)),
+        content: const Text(
+          "This order will be cancelled. If you paid online, the amount will be refunded to your wallet.",
+          style: TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text("Keep order", style: TextStyle(color: Colors.grey.shade500)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Yes, cancel"),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _cancelling = true);
+    try {
+      final res = await CustomerWalletService.cancelOrder(widget.orderId);
+      if (!mounted) return;
+      setState(() {
+        status = 'cancelled';
+        _cancelling = false;
+      });
+      final refunded = res['refunded'] == true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(refunded
+              ? "Order cancelled. Refund sent to your wallet 💰"
+              : "Order cancelled successfully."),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _cancelling = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceAll("Exception: ", ""))),
+      );
+    }
   }
 
   @override
@@ -82,6 +199,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     SocketService.emit("leaveRoom", widget.orderId);
     SocketService.off("order_status_update");
     SocketService.off("rider_live_location");
+    SocketService.off("receive_message");
+    SocketService.off("call_invite");
     mapController?.dispose();
     super.dispose();
   }
@@ -89,15 +208,67 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   bool get _isTerminal =>
       status == "delivered" || status == "cancelled";
 
+  bool get _isPending => status == "pending";
+
+  void _openChat() {
+    setState(() => _unreadCount = 0);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          orderId: widget.orderId,
+          senderRole: "customer",
+          recipientName: _riderName,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hasRider = ["rider_assigned", "arrived_at_pickup",
+        "picked_up", "on_the_way"].contains(status);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("Order Status"),
-        // ✅ Hide back button while order is active so user doesn't get lost
-        automaticallyImplyLeading: _isTerminal,
+        automaticallyImplyLeading: false,
+        leading: _isTerminal ? const SizedBox() : BackButton(
+          onPressed: () => Navigator.of(context).pop(),
+        ),
       ),
       body: _isTerminal ? _terminalView() : _trackingView(),
+      floatingActionButton: hasRider
+          ? FloatingActionButton(
+              onPressed: _openChat,
+              backgroundColor: CustomerColors.primary,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.chat_rounded, color: Colors.white),
+                  if (_unreadCount > 0)
+                    Positioned(
+                      top: -6,
+                      right: -6,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          _unreadCount > 9 ? "9+" : "$_unreadCount",
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            )
+          : null,
     );
   }
 
@@ -135,7 +306,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
             Text(
               delivered
                   ? "Your order has been delivered. Enjoy your meal!"
-                  : "This order was cancelled. You will be refunded if payment was made.",
+                  : "This order was cancelled. Any refund has been sent to your wallet.",
               style: const TextStyle(color: Colors.grey, fontSize: 14),
               textAlign: TextAlign.center,
             ),
@@ -152,12 +323,12 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                       borderRadius: BorderRadius.circular(14)),
                   elevation: 0,
                 ),
-                onPressed: () =>
-                    Navigator.of(context).popUntil((r) => r.isFirst),
-                child: Text(
-                  delivered ? "Back to Home" : "Back to Home",
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold),
+                onPressed: () {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                },
+                child: const Text(
+                  "Back to Home",
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
             ),
@@ -212,7 +383,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
         // ── Status Panel ────────────────────────────
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
           decoration: BoxDecoration(
             color: Colors.white,
             boxShadow: [
@@ -234,6 +405,36 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                     const TextStyle(color: Colors.grey, fontSize: 13),
                 textAlign: TextAlign.center,
               ),
+              // ── Cancel button — pending only ────────────────────────
+              if (_isPending) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    icon: _cancelling
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.red),
+                          )
+                        : const Icon(Icons.cancel_outlined,
+                            color: Colors.red, size: 18),
+                    label: Text(
+                      _cancelling ? "Cancelling..." : "Cancel Order",
+                      style: const TextStyle(
+                          color: Colors.red, fontWeight: FontWeight.w600),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.red, width: 1.4),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: _cancelling ? null : _confirmCancel,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -251,6 +452,7 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     ];
 
     final statusOrder = [
+      "pending",
       "accepted",
       "preparing",
       "searching_rider",
@@ -319,6 +521,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
 
   String _waitingText() {
     switch (status) {
+      case "pending":
+        return "Waiting for the vendor to accept your order...";
       case "searching_rider":
         return "Finding a rider near the vendor...";
       case "rider_assigned":
@@ -347,6 +551,12 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
 
   Map<String, dynamic> _statusConfig() {
     switch (status) {
+      case "pending":
+        return {
+          "icon": Icons.hourglass_top,
+          "color": Colors.orange,
+          "label": "Awaiting vendor"
+        };
       case "accepted":
         return {
           "icon": Icons.thumb_up,
@@ -400,6 +610,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
 
   String _statusDescription() {
     switch (status) {
+      case "pending":
+        return "Your order has been placed and is waiting for the vendor.";
       case "accepted":
         return "The vendor has received your order.";
       case "preparing":

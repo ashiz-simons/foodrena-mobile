@@ -6,7 +6,6 @@ import '../rider/vehicle_info_screen.dart';
 import '../vendor/vendor_onboarding_screen.dart';
 import 'phone_auth_screen.dart';
 
-// 🔧 Feature flag — set to true when Firebase billing is enabled
 const bool PHONE_VERIFY_ENABLED = false;
 
 class RegisterScreen extends StatefulWidget {
@@ -20,17 +19,17 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  final nameCtrl = TextEditingController();
-  final emailCtrl = TextEditingController();
-  final passwordCtrl = TextEditingController();
+  final nameCtrl            = TextEditingController();
+  final emailCtrl           = TextEditingController();
+  final passwordCtrl        = TextEditingController();
   final confirmPasswordCtrl = TextEditingController();
-  final phoneCtrl = TextEditingController();
+  final phoneCtrl           = TextEditingController();
 
-  bool loading = false;
+  bool loading          = false;
   bool _obscurePassword = true;
-  bool _obscureConfirm = true;
-  bool _registered = false;
-  bool _phoneVerified = false;
+  bool _obscureConfirm  = true;
+  bool _registered      = false;
+  bool _phoneVerified   = false;
   String? _verifiedIdToken;
   String error = "";
 
@@ -50,31 +49,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() => error = "Enter your phone number first");
       return;
     }
-
-    // 🔧 OTP disabled — auto-verify until Firebase billing is enabled
     if (!PHONE_VERIFY_ENABLED) {
-      setState(() {
-        _phoneVerified = true;
-        _verifiedIdToken = "bypass";
-        error = "";
-      });
+      setState(() { _phoneVerified = true; _verifiedIdToken = "bypass"; error = ""; });
       return;
     }
-
     final formatted = phone.startsWith('+') ? phone : '+234${phone.replaceFirst(RegExp(r'^0'), '')}';
     final idToken = await Navigator.push<String>(
       context,
       MaterialPageRoute(builder: (_) => PhoneAuthScreen(phone: formatted)),
     );
     if (idToken != null && mounted) {
-      setState(() {
-        _phoneVerified = true;
-        _verifiedIdToken = idToken;
-        error = "";
-      });
+      setState(() { _phoneVerified = true; _verifiedIdToken = idToken; error = ""; });
     }
   }
-  
+
   Future<Position?> _getLocation() async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -114,15 +102,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     try {
       final position = await _getLocation();
-
       final body = {
-        "name": nameCtrl.text.trim(),
+        "name":     nameCtrl.text.trim(),
         "password": passwordCtrl.text.trim(),
-        "role": widget.role,
-        "phone": phoneCtrl.text.trim().startsWith('+')
+        "role":     widget.role,
+        "phone":    phoneCtrl.text.trim().startsWith('+')
             ? phoneCtrl.text.trim()
             : '+234${phoneCtrl.text.trim().replaceFirst(RegExp(r'^0'), '')}',
-        "idToken": _verifiedIdToken,
+        "idToken":  _verifiedIdToken,
         if (emailCtrl.text.trim().isNotEmpty) "email": emailCtrl.text.trim(),
         if (position != null)
           "location": {
@@ -132,7 +119,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       };
 
       final res = await ApiService.post("/auth/register", body);
-
       if (!mounted) return;
 
       await Session.saveToken(res["token"]);
@@ -142,31 +128,50 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() { loading = false; _registered = true; });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        error = e.toString().replaceAll("Exception: ", "");
-        loading = false;
-      });
+      setState(() { error = e.toString().replaceAll("Exception: ", ""); loading = false; });
     }
   }
 
+  /// Pop everything off the stack, then trigger AuthGate to rebuild.
+  /// For rider/vendor we push the onboarding first, THEN clear on completion.
   Future<void> _continue() async {
     if (widget.role == "rider") {
-      await Navigator.push(context,
-          MaterialPageRoute(builder: (_) => VehicleInfoScreen(onCompleted: () => widget.onRegister?.call())));
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VehicleInfoScreen(
+            onCompleted: () => _finishAndEnter(),
+          ),
+        ),
+      );
       return;
     }
     if (widget.role == "vendor") {
-      await Navigator.push(context,
-          MaterialPageRoute(builder: (_) => VendorOnboardingScreen(onCompleted: () => widget.onRegister?.call())));
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VendorOnboardingScreen(
+            onCompleted: () => _finishAndEnter(),
+          ),
+        ),
+      );
       return;
     }
+    // Customer — go straight in
+    _finishAndEnter();
+  }
+
+  void _finishAndEnter() {
+    // Pop every screen off the stack, then let AuthGate rebuild into home.
+    if (!mounted) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
     widget.onRegister?.call();
   }
 
-  String get _roleLabel => widget.role == "rider" ? "Rider" : widget.role == "vendor" ? "Vendor" : "Customer";
-  Color get _roleColor => widget.role == "rider" ? Colors.orange : widget.role == "vendor" ? Colors.green : const Color(0xFFDC2626);
-  IconData get _roleIcon => widget.role == "rider" ? Icons.delivery_dining : widget.role == "vendor" ? Icons.storefront : Icons.shopping_bag;
-  String get _nextStepLabel => widget.role == "rider" ? "Continue to vehicle details" : widget.role == "vendor" ? "Continue to business details" : "Enter the app";
+  String   get _roleLabel    => widget.role == "rider" ? "Rider" : widget.role == "vendor" ? "Vendor" : "Customer";
+  Color    get _roleColor    => widget.role == "rider" ? Colors.orange : widget.role == "vendor" ? Colors.green : const Color(0xFFDC2626);
+  IconData get _roleIcon     => widget.role == "rider" ? Icons.delivery_dining : widget.role == "vendor" ? Icons.storefront : Icons.shopping_bag;
+  String   get _nextStepLabel => widget.role == "rider" ? "Continue to vehicle details" : widget.role == "vendor" ? "Continue to business details" : "Enter the app";
 
   @override
   Widget build(BuildContext context) {
@@ -210,13 +215,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
           width: double.infinity,
           child: ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: _roleColor, foregroundColor: Colors.white,
+              backgroundColor: _roleColor,
+              foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               elevation: 0,
             ),
             onPressed: _continue,
-            child: Text(_nextStepLabel, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            child: Text(_nextStepLabel,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           ),
         ),
       ],
@@ -227,16 +234,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Role badge
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-              color: _roleColor.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+              color: _roleColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(_roleIcon, color: _roleColor, size: 14),
             const SizedBox(width: 6),
             Text("Signing up as $_roleLabel",
-                style: TextStyle(color: _roleColor, fontSize: 12, fontWeight: FontWeight.w600)),
+                style: TextStyle(
+                    color: _roleColor, fontSize: 12, fontWeight: FontWeight.w600)),
           ]),
         ),
         const SizedBox(height: 24),
@@ -244,7 +252,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _field("Full Name", nameCtrl, icon: Icons.person_outline),
         const SizedBox(height: 14),
 
-        // Phone + verify button
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -285,7 +292,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     backgroundColor: _roleColor,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                     elevation: 0,
                   ),
                   onPressed: _verifyPhone,
@@ -297,12 +305,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         const SizedBox(height: 14),
 
-        // Email optional
         _field("Email (optional)", emailCtrl,
-            icon: Icons.email_outlined, inputType: TextInputType.emailAddress),
+            icon: Icons.email_outlined,
+            inputType: TextInputType.emailAddress),
         const SizedBox(height: 14),
 
-        // Password
         _passwordField("Password", passwordCtrl, _obscurePassword,
             () => setState(() => _obscurePassword = !_obscurePassword)),
         const SizedBox(height: 14),
@@ -323,8 +330,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               child: Row(children: [
                 const Icon(Icons.error_outline, color: Colors.red, size: 16),
                 const SizedBox(width: 8),
-                Expanded(child: Text(error,
-                    style: const TextStyle(color: Colors.red, fontSize: 13))),
+                Expanded(
+                    child: Text(error,
+                        style: const TextStyle(color: Colors.red, fontSize: 13))),
               ]),
             ),
           ),
@@ -335,19 +343,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
           width: double.infinity,
           child: ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: _phoneVerified ? _roleColor : Colors.grey.shade300,
+              backgroundColor:
+                  _phoneVerified ? _roleColor : Colors.grey.shade300,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
               elevation: 0,
             ),
             onPressed: loading || !_phoneVerified ? null : register,
             child: loading
-                ? const SizedBox(height: 20, width: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                ? const SizedBox(
+                    height: 20, width: 20,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white))
                 : Text(
-                    _phoneVerified ? "Create Account" : "Verify phone to continue",
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    _phoneVerified
+                        ? "Create Account"
+                        : "Verify phone to continue",
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
                   ),
           ),
         ),
@@ -385,7 +400,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         labelText: label,
         prefixIcon: const Icon(Icons.lock_outline, size: 20),
         suffixIcon: IconButton(
-          icon: Icon(obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 20),
+          icon: Icon(
+              obscure
+                  ? Icons.visibility_off_outlined
+                  : Icons.visibility_outlined,
+              size: 20),
           onPressed: toggle,
         ),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),

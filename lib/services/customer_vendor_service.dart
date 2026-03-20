@@ -6,8 +6,12 @@ class CustomerVendorService {
   /// =======================
   /// GET ALL VENDORS
   /// =======================
-  static Future<List<Vendor>> getVendors() async {
-    final res = await ApiService.get("/vendors");
+  static Future<List<Vendor>> getVendors({double? lat, double? lng}) async {
+    String path = "/vendors";
+    if (lat != null && lng != null) {
+      path += "?lat=$lat&lng=$lng";
+    }
+    final res = await ApiService.get(path);
 
     if (res is! List) return [];
 

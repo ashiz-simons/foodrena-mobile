@@ -53,9 +53,30 @@ class RiderService {
     return res is List ? res : [];
   }
 
-  static Future<void> withdraw(double amount) async {
+ static Future<void> withdraw(double amount) async {
     await ApiService.post("/riders/withdrawals", {
       "amount": amount,
     });
+  }
+
+  // ── Nearby Riders ────────────────────────────────────────────
+  static Future<List<dynamic>> getNearbyRiders(double lat, double lng) async {
+    final res = await ApiService.get("/riders/nearby?lat=$lat&lng=$lng");
+    return res is List ? res : [];
+  }
+
+  // ── Claim Order ──────────────────────────────────────────────
+ static Future<Map<String, dynamic>> claimOrder(String orderId) async {
+    final res = await ApiService.post("/riders/order/$orderId/claim", {});
+    return res is Map<String, dynamic> ? res : {};
+  }
+
+  static Future<List<dynamic>> getAvailableOrders({double? lat, double? lng}) async {
+    String path = "/orders/available";
+    if (lat != null && lng != null) {
+      path += "?lat=$lat&lng=$lng";
+    }
+    final res = await ApiService.get(path);
+    return res is List ? res : [];
   }
 }

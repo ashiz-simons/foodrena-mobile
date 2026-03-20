@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/cart/cart_provider.dart';
-import '../../core/theme/customer_theme.dart';
+import '../../core/theme/app_theme.dart';
 import '../../models/menu_item_model.dart';
 
 class PopularDish {

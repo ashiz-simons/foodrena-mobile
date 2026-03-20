@@ -4,12 +4,7 @@ import '../../services/api_service.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 
-const _kBg      = Color(0xFFF0FAFA);
-const _kCard    = Color(0xFFFFFFFF);
-const _kCardAlt = Color(0xFFE0F7F7);
-const _kTeal    = Color(0xFF00B4B4);
-const _kText    = Color(0xFF1A1A1A);
-const _kMuted   = Color(0xFF6B8A8A);
+const _kTeal = Color(0xFF00B4B4);
 
 class VendorMenuScreen extends StatefulWidget {
   const VendorMenuScreen({super.key});
@@ -22,6 +17,14 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
   bool loading = true;
   String? uploadingItemId;
   List menuItems = [];
+
+  bool get _dark => Theme.of(context).brightness == Brightness.dark;
+  Color get _bg      => _dark ? const Color(0xFF081818) : const Color(0xFFF0FAFA);
+  Color get _card    => _dark ? const Color(0xFF0F2828) : Colors.white;
+  Color get _cardAlt => _dark ? const Color(0xFF163535) : const Color(0xFFE0F7F7);
+  Color get _text    => _dark ? Colors.white : const Color(0xFF1A1A1A);
+  Color get _muted   => _dark ? Colors.grey.shade400 : const Color(0xFF6B8A8A);
+  Color get _border  => _dark ? Colors.teal.withOpacity(0.18) : Colors.teal.withOpacity(0.10);
 
   @override
   void initState() {
@@ -44,8 +47,7 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
 
   Future<void> uploadMenuImage(String menuItemId) async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(
-        source: ImageSource.gallery, imageQuality: 70);
+    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
     if (picked == null) return;
     setState(() => uploadingItemId = menuItemId);
     try {
@@ -88,22 +90,19 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: _kCard,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16)),
-        title: const Text("Delete Item",
-            style: TextStyle(color: _kText, fontWeight: FontWeight.w700)),
-        content: const Text("Are you sure you want to delete this item?",
-            style: TextStyle(color: _kMuted)),
+        backgroundColor: _card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text("Delete Item",
+            style: TextStyle(color: _text, fontWeight: FontWeight.w700)),
+        content: Text("Are you sure you want to delete this item?",
+            style: TextStyle(color: _muted)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text("Cancel",
-                  style: TextStyle(color: _kMuted))),
+              child: Text("Cancel", style: TextStyle(color: _muted))),
           TextButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text("Delete",
-                  style: TextStyle(color: Colors.redAccent))),
+              child: const Text("Delete", style: TextStyle(color: Colors.redAccent))),
         ],
       ),
     );
@@ -148,12 +147,9 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
     return showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: _kCard,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16)),
-        title: Text(title,
-            style: const TextStyle(
-                color: _kText, fontWeight: FontWeight.w700)),
+        backgroundColor: _card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(title, style: TextStyle(color: _text, fontWeight: FontWeight.w700)),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -162,30 +158,23 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
               const SizedBox(height: 12),
               _dialogField(descCtrl, "Description"),
               const SizedBox(height: 12),
-              _dialogField(priceCtrl, "Price",
-                  inputType: TextInputType.number),
+              _dialogField(priceCtrl, "Price", inputType: TextInputType.number),
             ],
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel",
-                style: TextStyle(color: _kMuted)),
+            child: Text("Cancel", style: TextStyle(color: _muted)),
           ),
           GestureDetector(
             onTap: onSave,
             child: Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 20, vertical: 10),
-              decoration: BoxDecoration(
-                color: _kTeal,
-                borderRadius: BorderRadius.circular(10),
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(color: _kTeal, borderRadius: BorderRadius.circular(10)),
               child: Text(
                 title == "Add Item" ? "Add" : "Save",
-                style: const TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w600),
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
               ),
             ),
           ),
@@ -199,16 +188,13 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
     return TextField(
       controller: ctrl,
       keyboardType: inputType,
-      style: const TextStyle(color: _kText, fontSize: 14),
+      style: TextStyle(color: _text, fontSize: 14),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(color: _kMuted, fontSize: 13),
+        labelStyle: TextStyle(color: _muted, fontSize: 13),
         filled: true,
-        fillColor: _kCardAlt,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide.none,
-        ),
+        fillColor: _cardAlt,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: _kTeal, width: 1.5),
@@ -217,25 +203,24 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
     );
   }
 
-  void _showMessage(String msg) => ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text(msg)));
+  void _showMessage(String msg) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _kBg,
+      backgroundColor: _bg,
       appBar: AppBar(
-        backgroundColor: _kBg,
+        backgroundColor: _bg,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
+        systemOverlayStyle: _dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded,
-              color: _kText, size: 20),
+          icon: Icon(Icons.arrow_back_ios_new_rounded, color: _text, size: 20),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text("Manage Menu",
-            style: TextStyle(
-                color: _kText, fontWeight: FontWeight.w700, fontSize: 18)),
+        title: Text("Manage Menu",
+            style: TextStyle(color: _text, fontWeight: FontWeight.w700, fontSize: 18)),
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: _kTeal,
@@ -249,14 +234,11 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.restaurant_menu_rounded,
-                          size: 52, color: _kMuted.withOpacity(0.4)),
+                      Icon(Icons.restaurant_menu_rounded, size: 52, color: _muted.withOpacity(0.4)),
                       const SizedBox(height: 14),
-                      const Text("No menu items yet",
-                          style: TextStyle(color: _kMuted, fontSize: 15)),
+                      Text("No menu items yet", style: TextStyle(color: _muted, fontSize: 15)),
                       const SizedBox(height: 8),
-                      const Text("Tap + to add your first dish",
-                          style: TextStyle(color: _kMuted, fontSize: 12)),
+                      Text("Tap + to add your first dish", style: TextStyle(color: _muted, fontSize: 12)),
                     ],
                   ),
                 )
@@ -278,7 +260,7 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
         HapticFeedback.mediumImpact();
         showModalBottomSheet(
           context: context,
-          backgroundColor: _kCard,
+          backgroundColor: _card,
           shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
           builder: (_) => Padding(
@@ -290,22 +272,19 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
                   width: 40, height: 4,
                   margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
-                    color: _kMuted.withOpacity(0.3),
+                    color: _muted.withOpacity(0.3),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
                 ListTile(
                   leading: const Icon(Icons.edit_rounded, color: _kTeal),
-                  title: const Text("Edit",
-                      style: TextStyle(color: _kText, fontWeight: FontWeight.w600)),
+                  title: Text("Edit", style: TextStyle(color: _text, fontWeight: FontWeight.w600)),
                   onTap: () { Navigator.pop(context); editMenuItem(item); },
                 ),
                 ListTile(
-                  leading: const Icon(Icons.delete_rounded,
-                      color: Colors.redAccent),
+                  leading: const Icon(Icons.delete_rounded, color: Colors.redAccent),
                   title: const Text("Delete",
-                      style: TextStyle(
-                          color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                      style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
                   onTap: () { Navigator.pop(context); deleteMenuItem(item["_id"]); },
                 ),
               ],
@@ -316,48 +295,42 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
-          color: _kCard,
+          color: _card,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.teal.withOpacity(0.10)),
+          border: Border.all(color: _border),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withOpacity(_dark ? 0.15 : 0.04),
                 blurRadius: 10,
                 offset: const Offset(0, 3)),
           ],
         ),
         child: Row(
           children: [
-            // Image
             ClipRRect(
-              borderRadius: const BorderRadius.horizontal(
-                  left: Radius.circular(15)),
+              borderRadius: const BorderRadius.horizontal(left: Radius.circular(15)),
               child: SizedBox(
                 width: 72,
                 height: 72,
                 child: isUploading
                     ? Container(
-                        color: _kCardAlt,
+                        color: _cardAlt,
                         child: const Center(
                           child: SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: _kTeal),
+                            width: 22, height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: _kTeal),
                           ),
                         ),
                       )
                     : image != null && image["url"] != null
                         ? Image.network(image["url"], fit: BoxFit.cover)
                         : Container(
-                            color: _kCardAlt,
-                            child: const Icon(Icons.fastfood_rounded,
-                                color: _kTeal, size: 28),
+                            color: _cardAlt,
+                            child: const Icon(Icons.fastfood_rounded, color: _kTeal, size: 28),
                           ),
               ),
             ),
 
-            // Info
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -365,40 +338,29 @@ class _VendorMenuScreenState extends State<VendorMenuScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(item["name"],
-                        style: const TextStyle(
-                            color: _kText,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14)),
+                        style: TextStyle(color: _text, fontWeight: FontWeight.w600, fontSize: 14)),
                     if ((item["description"] ?? "").isNotEmpty) ...[
                       const SizedBox(height: 3),
                       Text(item["description"],
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: _kMuted, fontSize: 12)),
+                          style: TextStyle(color: _muted, fontSize: 12)),
                     ],
                     const SizedBox(height: 6),
                     Text("₦${item["price"]}",
-                        style: const TextStyle(
-                            color: _kTeal,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14)),
+                        style: const TextStyle(color: _kTeal, fontWeight: FontWeight.w700, fontSize: 14)),
                   ],
                 ),
               ),
             ),
 
-            // Hint
             Padding(
               padding: const EdgeInsets.only(right: 14),
               child: Column(
                 children: [
-                  Icon(Icons.photo_camera_rounded,
-                      size: 16, color: _kMuted.withOpacity(0.5)),
+                  Icon(Icons.photo_camera_rounded, size: 16, color: _muted.withOpacity(0.5)),
                   const SizedBox(height: 2),
-                  Text("tap",
-                      style: TextStyle(
-                          fontSize: 9, color: _kMuted.withOpacity(0.5))),
+                  Text("tap", style: TextStyle(fontSize: 9, color: _muted.withOpacity(0.5))),
                 ],
               ),
             ),

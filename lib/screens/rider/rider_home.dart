@@ -7,21 +7,22 @@ import '../../utils/session.dart';
 import '../../services/api_service.dart';
 import '../../services/socket_service.dart';
 import '../../services/rider_service.dart';
+import '../../services/notification_store.dart';
+import '../../core/theme/app_theme.dart';
+import '../../widgets/notification_bell.dart';
 
 import 'rider_orders_screen.dart';
 import 'rider_wallet_screen.dart';
 import 'rider_profile_screen.dart';
+import 'available_orders_screen.dart';
+import 'order_alert_screen.dart';
+import '../../services/order_alert_service.dart';
+import '../shared/identity_verification_screen.dart'; 
 
-const _kDark    = Color(0xFFFFF8F2);
-const _kCard    = Color(0xFFFFFFFF);
-const _kCardAlt = Color(0xFFFFF0E6);
-const _kOnline  = Color(0xFF00D97E);
-const _kOffline = Color(0xFF3A3F50);
-const _kAmber   = Color(0xFFFFC542);
-const _kBlue    = Color(0xFF4A90E2);
-const _kText    = Color(0xFF1A1A1A);
-const _kMuted   = Color(0xFF888888);
-const _kPurple  = Color(0xFFB06EFF);
+const _kOnline = Color(0xFF00D97E);
+const _kAmber  = Color(0xFFFFC542);
+const _kBlue   = Color(0xFF4A90E2);
+const _kPurple = Color(0xFFB06EFF);
 
 class RiderHome extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -38,6 +39,7 @@ class _RiderHomeState extends State<RiderHome>
   bool online = false;
   bool loading = true;
   bool _toggling = false;
+  String _verificationStatus = "unverified";
 
   int ordersToday = 0;
   double earnings = 0.0;
@@ -70,8 +72,19 @@ class _RiderHomeState extends State<RiderHome>
     riderId = await Session.getRiderId();
     userId = await Session.getUserId();
     riderName = await Session.getUserName() ?? "Rider";
-    await loadDashboard();
+    await OrderAlertService.init();
+    await Future.wait([loadDashboard(), _loadVerificationStatus()]);
+    _listenForOrders();
     if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _loadVerificationStatus() async {
+    try {
+      final res = await ApiService.get("/verification/identity/status");
+      if (mounted) {
+        setState(() => _verificationStatus = res["status"] ?? "unverified");
+      }
+    } catch (_) {}
   }
 
   Future<void> loadDashboard() async {
@@ -95,6 +108,40 @@ class _RiderHomeState extends State<RiderHome>
     } catch (e) {
       debugPrint("❌ Dashboard load failed: $e");
     }
+  }
+
+  void _listenForOrders() {
+    SocketService.on("new_order", (data) {
+      if (!mounted) return;
+
+      // Add to notification store
+      NotificationStore.instance.add(AppNotification(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        title: "New Order!",
+        body: "You have a new delivery request.",
+        type: "new_order",
+        receivedAt: DateTime.now(),
+      ));
+
+      // Start alarm + vibration
+      OrderAlertService.startAlert();
+
+      // Show full screen alert overlay
+      final orderData = data is Map<String, dynamic>
+          ? data
+          : <String, dynamic>{};
+
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => OrderAlertScreen(
+            orderData: orderData,
+            onAccepted: () => loadDashboard(),
+            onRejected: () => loadDashboard(),
+          ),
+        ),
+      );
+    });
   }
 
   Future<void> _connectSocket() async {
@@ -167,6 +214,7 @@ class _RiderHomeState extends State<RiderHome>
   void dispose() {
     _pulseController.dispose();
     gpsStream?.cancel();
+    SocketService.off("new_delivery");
     SocketService.disconnect();
     super.dispose();
   }
@@ -186,38 +234,83 @@ class _RiderHomeState extends State<RiderHome>
     return amount.toStringAsFixed(0);
   }
 
+  bool _dark(BuildContext ctx) =>
+      Theme.of(ctx).brightness == Brightness.dark;
+
+  Color _bg(BuildContext ctx) => _dark(ctx)
+      ? RiderColors.backgroundDark
+      : RiderColors.background;
+
+  Color _card(BuildContext ctx) => _dark(ctx)
+      ? RiderColors.surfaceDark
+      : RiderColors.surface;
+
+  Color _cardAlt(BuildContext ctx) => _dark(ctx)
+      ? RiderColors.surfaceAltDark
+      : RiderColors.surfaceAlt;
+
+  Color _text(BuildContext ctx) => _dark(ctx)
+      ? RiderColors.textDark
+      : RiderColors.text;
+
+  Color _muted(BuildContext ctx) => _dark(ctx)
+      ? RiderColors.mutedDark
+      : RiderColors.muted;
+
+  Color _offline(BuildContext ctx) => _dark(ctx)
+      ? RiderColors.offlineDark
+      : RiderColors.offline;
+
   @override
   Widget build(BuildContext context) {
+    final dark = _dark(context);
+
     if (loading) {
-      return const Scaffold(
-        backgroundColor: const Color(0xFFFFF8F2),
-        body: Center(child: CircularProgressIndicator(color: _kOnline)),
+      return Scaffold(
+        backgroundColor: _bg(context),
+        body: const Center(child: CircularProgressIndicator(color: _kOnline)),
       );
     }
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.dark,
+      value: dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
       child: Scaffold(
-        backgroundColor: _kDark,
+        backgroundColor: _bg(context),
         body: RefreshIndicator(
           color: _kOnline,
-          backgroundColor: Colors.white,
+          backgroundColor: _card(context),
           onRefresh: loadDashboard,
           child: CustomScrollView(
             slivers: [
-              _buildHeader(),
+              _buildHeader(context),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 4, 20, 40),
                   child: Column(
                     children: [
-                      _onlineToggleCard(),
+                      if (_verificationStatus != "verified")
+                        _verificationBanner(context),
+                      if (_verificationStatus != "verified")
+                        const SizedBox(height: 16),
+                      _onlineToggleCard(context),
                       const SizedBox(height: 20),
-                      _statsRow(),
+                      _statsRow(context),
                       const SizedBox(height: 28),
-                      _sectionLabel("QUICK ACTIONS"),
+                      _sectionLabel("QUICK ACTIONS", context),
                       const SizedBox(height: 14),
                       _actionCard(
+                        context: context,
+                        icon: Icons.flash_on_rounded,
+                        title: "Available Orders",
+                        subtitle: "Pick from orders near you",
+                        accent: _kOnline,
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(
+                                builder: (_) => const AvailableOrdersScreen())),
+                      ),
+                      const SizedBox(height: 12),
+                      _actionCard(
+                        context: context,
                         icon: Icons.delivery_dining_rounded,
                         title: "Active Orders",
                         subtitle: "View and manage your deliveries",
@@ -227,6 +320,7 @@ class _RiderHomeState extends State<RiderHome>
                       ),
                       const SizedBox(height: 12),
                       _actionCard(
+                        context: context,
                         icon: Icons.account_balance_wallet_rounded,
                         title: "Wallet & Earnings",
                         subtitle: "Withdraw your balance",
@@ -236,6 +330,7 @@ class _RiderHomeState extends State<RiderHome>
                       ),
                       const SizedBox(height: 12),
                       _actionCard(
+                        context: context,
                         icon: Icons.person_rounded,
                         title: "My Profile",
                         subtitle: "Settings, bank details & role switch",
@@ -253,8 +348,80 @@ class _RiderHomeState extends State<RiderHome>
     );
   }
 
-  // ── HEADER ─────────────────────────────────────────────────────────────
-  Widget _buildHeader() {
+  Widget _verificationBanner(BuildContext context) {
+    final isPending = _verificationStatus == "pending";
+    final isFailed  = _verificationStatus == "failed";
+    final color     = isFailed ? Colors.redAccent : _kAmber;
+
+    return GestureDetector(
+      onTap: isPending ? null : () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => IdentityVerificationScreen(
+            accentColor: _kOnline,
+            onVerified: () {
+              setState(() => _verificationStatus = "verified");
+              Navigator.pop(context);
+            },
+          ),
+        ),
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isPending
+                  ? Icons.hourglass_top_rounded
+                  : isFailed
+                      ? Icons.error_outline_rounded
+                      : Icons.verified_user_outlined,
+              color: color,
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isPending
+                        ? "Verification Pending"
+                        : isFailed
+                            ? "Verification Failed"
+                            : "Identity Not Verified",
+                    style: TextStyle(
+                        color: _text(context),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    isPending
+                        ? "Your identity is being reviewed"
+                        : isFailed
+                            ? "Tap to retry verification"
+                            : "Verify your NIN or Driver's License",
+                    style: TextStyle(color: _muted(context), fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            if (!isPending)
+              Icon(Icons.arrow_forward_ios_rounded,
+                  size: 13, color: _muted(context)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(BuildContext context) {
     return SliverToBoxAdapter(
       child: SafeArea(
         child: Padding(
@@ -262,46 +429,39 @@ class _RiderHomeState extends State<RiderHome>
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Avatar → profile
               GestureDetector(
                 onTap: _openProfile,
                 child: Stack(
                   children: [
                     Container(
-                      width: 58,
-                      height: 58,
+                      width: 58, height: 58,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: online ? _kOnline : _kOffline,
+                          color: online ? _kOnline : _offline(context),
                           width: 2.5,
                         ),
                       ),
                       child: ClipOval(
                         child: profileImageUrl != null
-                            ? Image.network(profileImageUrl!,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => _avatarPlaceholder())
-                            : _avatarPlaceholder(),
+                            ? Image.network(profileImageUrl!, fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => _avatarPlaceholder(context))
+                            : _avatarPlaceholder(context),
                       ),
                     ),
-                    // Online dot
                     Positioned(
-                      bottom: 2,
-                      right: 2,
+                      bottom: 2, right: 2,
                       child: AnimatedBuilder(
                         animation: _pulseAnim,
                         builder: (_, __) => Container(
-                          width: 12,
-                          height: 12,
+                          width: 12, height: 12,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: online ? _kOnline : _kOffline,
-                            border: Border.all(color: _kDark, width: 2),
+                            color: online ? _kOnline : _offline(context),
+                            border: Border.all(color: _bg(context), width: 2),
                             boxShadow: online
                                 ? [BoxShadow(
-                                    color: _kOnline.withOpacity(
-                                        0.6 * _pulseAnim.value),
+                                    color: _kOnline.withOpacity(0.6 * _pulseAnim.value),
                                     blurRadius: 6)]
                                 : [],
                           ),
@@ -312,54 +472,43 @@ class _RiderHomeState extends State<RiderHome>
                 ),
               ),
               const SizedBox(width: 14),
-
-              // Greeting + name + rating
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(_greeting,
-                        style: const TextStyle(
-                            color: _kMuted, fontSize: 12, letterSpacing: 0.3)),
+                        style: TextStyle(
+                            color: _muted(context), fontSize: 12, letterSpacing: 0.3)),
                     const SizedBox(height: 2),
                     Text(_firstName,
-                        style: const TextStyle(
-                            color: _kText,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.4)),
+                        style: TextStyle(
+                            color: _text(context), fontSize: 22,
+                            fontWeight: FontWeight.w700, letterSpacing: -0.4)),
                     const SizedBox(height: 4),
                     if (riderRating > 0)
-                      Row(
-                        children: [
-                          const Icon(Icons.star_rounded,
-                              color: _kAmber, size: 13),
-                          const SizedBox(width: 3),
-                          Text(riderRating.toStringAsFixed(1),
-                              style: const TextStyle(
-                                  color: _kAmber,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600)),
-                          const SizedBox(width: 4),
-                          Text(
-                            "($riderRatingCount ${riderRatingCount == 1 ? 'rating' : 'ratings'})",
+                      Row(children: [
+                        const Icon(Icons.star_rounded, color: _kAmber, size: 13),
+                        const SizedBox(width: 3),
+                        Text(riderRating.toStringAsFixed(1),
                             style: const TextStyle(
-                                color: _kMuted, fontSize: 11),
-                          ),
-                        ],
-                      )
+                                color: _kAmber, fontSize: 12,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 4),
+                        Text(
+                          "($riderRatingCount ${riderRatingCount == 1 ? 'rating' : 'ratings'})",
+                          style: TextStyle(color: _muted(context), fontSize: 11),
+                        ),
+                      ])
                     else
-                      const Text("No ratings yet",
-                          style: TextStyle(color: _kMuted, fontSize: 11)),
+                      Text("No ratings yet",
+                          style: TextStyle(color: _muted(context), fontSize: 11)),
                   ],
                 ),
               ),
-
-              // Notifications
-              IconButton(
-                onPressed: () {},
-                icon: const Icon(Icons.notifications_outlined,
-                    color: _kText, size: 22),
+              // ── Notification bell ───────────────────────────────────
+              NotificationBell(
+                color: _text(context),
+                badgeColor: _kOnline,
               ),
             ],
           ),
@@ -368,12 +517,13 @@ class _RiderHomeState extends State<RiderHome>
     );
   }
 
-  Widget _avatarPlaceholder() => Container(
-        color: const Color(0xFFFFF0E6),
-        child: const Icon(Icons.person_outline, color: _kMuted, size: 28),
+  Widget _avatarPlaceholder(BuildContext context) => Container(
+        color: _cardAlt(context),
+        child: Icon(Icons.person_outline, color: _muted(context), size: 28),
       );
 
-  Widget _onlineToggleCard() {
+  Widget _onlineToggleCard(BuildContext context) {
+    final dark = _dark(context);
     return AnimatedContainer(
       duration: const Duration(milliseconds: 400),
       curve: Curves.easeInOut,
@@ -384,19 +534,22 @@ class _RiderHomeState extends State<RiderHome>
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: online
-              ? [const Color(0xFFE8F8F0), const Color(0xFFD4F2E4)]
-              : [const Color(0xFFFFFFFF), const Color(0xFFFFF0E6)],
+              ? (dark
+                  ? [const Color(0xFF0A2A1A), const Color(0xFF082215)]
+                  : [const Color(0xFFE8F8F0), const Color(0xFFD4F2E4)])
+              : [_card(context), _cardAlt(context)],
         ),
         border: Border.all(
           color: online
               ? _kOnline.withOpacity(0.4)
-              : Colors.orange.withOpacity(0.15),
+              : (dark
+                  ? Colors.orange.withOpacity(0.1)
+                  : Colors.orange.withOpacity(0.15)),
         ),
         boxShadow: online
             ? [BoxShadow(
                 color: _kOnline.withOpacity(0.15),
-                blurRadius: 24,
-                offset: const Offset(0, 8))]
+                blurRadius: 24, offset: const Offset(0, 8))]
             : [],
       ),
       child: Row(
@@ -404,8 +557,7 @@ class _RiderHomeState extends State<RiderHome>
           AnimatedBuilder(
             animation: _pulseAnim,
             builder: (_, __) => SizedBox(
-              width: 40,
-              height: 40,
+              width: 40, height: 40,
               child: Stack(
                 alignment: Alignment.center,
                 children: [
@@ -419,15 +571,13 @@ class _RiderHomeState extends State<RiderHome>
                       ),
                     ),
                   Container(
-                    width: 14,
-                    height: 14,
+                    width: 14, height: 14,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: online ? _kOnline : _kMuted,
+                      color: online ? _kOnline : _muted(context),
                       boxShadow: online
                           ? [BoxShadow(
-                              color: _kOnline.withOpacity(0.6),
-                              blurRadius: 8)]
+                              color: _kOnline.withOpacity(0.6), blurRadius: 8)]
                           : [],
                     ),
                   ),
@@ -443,21 +593,20 @@ class _RiderHomeState extends State<RiderHome>
                 Text(
                   online ? "You're Online" : "You're Offline",
                   style: TextStyle(
-                    color: online ? _kOnline : _kText,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
+                    color: online ? _kOnline : _text(context),
+                    fontSize: 17, fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 3),
                 Text(
                   online ? "Ready to receive new orders" : "Go online to start earning",
-                  style: const TextStyle(color: _kMuted, fontSize: 12),
+                  style: TextStyle(color: _muted(context), fontSize: 12),
                 ),
               ],
             ),
           ),
           _toggling
-              ? const SizedBox(
+              ? SizedBox(
                   width: 36, height: 20,
                   child: Center(
                     child: SizedBox(
@@ -471,25 +620,21 @@ class _RiderHomeState extends State<RiderHome>
                   onTap: () => toggleOnline(!online),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 300),
-                    width: 52,
-                    height: 28,
+                    width: 52, height: 28,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(14),
-                      color: online ? _kOnline : _kOffline,
+                      color: online ? _kOnline : _offline(context),
                     ),
                     child: AnimatedAlign(
                       duration: const Duration(milliseconds: 300),
                       curve: Curves.easeInOut,
-                      alignment: online
-                          ? Alignment.centerRight
-                          : Alignment.centerLeft,
+                      alignment:
+                          online ? Alignment.centerRight : Alignment.centerLeft,
                       child: Container(
                         margin: const EdgeInsets.all(3),
                         width: 22, height: 22,
                         decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white,
-                        ),
+                            shape: BoxShape.circle, color: Colors.white),
                       ),
                     ),
                   ),
@@ -499,10 +644,11 @@ class _RiderHomeState extends State<RiderHome>
     );
   }
 
-  Widget _statsRow() {
+  Widget _statsRow(BuildContext context) {
     return Row(
       children: [
         Expanded(child: _statCard(
+          context: context,
           label: "Today's Orders",
           value: ordersToday.toString(),
           icon: Icons.receipt_long_rounded,
@@ -510,6 +656,7 @@ class _RiderHomeState extends State<RiderHome>
         )),
         const SizedBox(width: 14),
         Expanded(child: _statCard(
+          context: context,
           label: "Total Earned",
           value: "₦${_formatAmount(earnings)}",
           icon: Icons.account_balance_wallet_rounded,
@@ -520,17 +667,22 @@ class _RiderHomeState extends State<RiderHome>
   }
 
   Widget _statCard({
+    required BuildContext context,
     required String label,
     required String value,
     required IconData icon,
     required Color accent,
   }) {
+    final dark = _dark(context);
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: _kCard,
+        color: _card(context),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.orange.withOpacity(0.12)),
+        border: Border.all(
+            color: dark
+                ? Colors.orange.withOpacity(0.1)
+                : Colors.orange.withOpacity(0.12)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -545,42 +697,46 @@ class _RiderHomeState extends State<RiderHome>
           ),
           const SizedBox(height: 14),
           Text(value,
-              style: const TextStyle(
-                  color: _kText, fontSize: 22,
+              style: TextStyle(
+                  color: _text(context), fontSize: 22,
                   fontWeight: FontWeight.w700, letterSpacing: -0.5)),
           const SizedBox(height: 4),
-          Text(label,
-              style: const TextStyle(color: _kMuted, fontSize: 11)),
+          Text(label, style: TextStyle(color: _muted(context), fontSize: 11)),
         ],
       ),
     );
   }
 
-  Widget _sectionLabel(String text) {
+  Widget _sectionLabel(String text, BuildContext context) {
     return Align(
       alignment: Alignment.centerLeft,
       child: Text(text,
-          style: const TextStyle(
-              color: _kMuted, fontSize: 11,
+          style: TextStyle(
+              color: _muted(context), fontSize: 11,
               fontWeight: FontWeight.w600, letterSpacing: 1.4)),
     );
   }
 
   Widget _actionCard({
+    required BuildContext context,
     required IconData icon,
     required String title,
     required String subtitle,
     required Color accent,
     required VoidCallback onTap,
   }) {
+    final dark = _dark(context);
     return GestureDetector(
       onTap: () { HapticFeedback.selectionClick(); onTap(); },
       child: Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: _kCard,
+          color: _card(context),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: Colors.orange.withOpacity(0.12)),
+          border: Border.all(
+              color: dark
+                  ? Colors.orange.withOpacity(0.1)
+                  : Colors.orange.withOpacity(0.12)),
         ),
         child: Row(
           children: [
@@ -598,17 +754,17 @@ class _RiderHomeState extends State<RiderHome>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
-                      style: const TextStyle(
-                          color: _kText, fontSize: 15,
+                      style: TextStyle(
+                          color: _text(context), fontSize: 15,
                           fontWeight: FontWeight.w600)),
                   const SizedBox(height: 3),
                   Text(subtitle,
-                      style: const TextStyle(color: _kMuted, fontSize: 12)),
+                      style: TextStyle(color: _muted(context), fontSize: 12)),
                 ],
               ),
             ),
-            const Icon(Icons.arrow_forward_ios_rounded,
-                size: 14, color: _kMuted),
+            Icon(Icons.arrow_forward_ios_rounded,
+                size: 14, color: _muted(context)),
           ],
         ),
       ),

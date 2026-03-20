@@ -4,18 +4,18 @@ import 'dart:math' as math;
 import '../../models/vendor_model.dart';
 import '../../services/customer_vendor_service.dart';
 import '../../services/api_service.dart';
+import '../../services/customer_wallet_service.dart';
 import 'vendor_details_screen.dart';
 import 'all_vendors_screen.dart';
 import 'dish_detail_screen.dart';
 import '../../shared/widgets/ad_banner.dart';
-import '../../core/theme/customer_theme.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/cart/cart_provider.dart';
 import '../../utils/session.dart';
-import '../../services/notification_store.dart';
-import 'notifications_screen.dart';
 import '../customer/orders/customer_orders_screen.dart';
 import '../package/package_delivery_screen.dart';
-import 'customer_search.dart';
+import 'customer_wallet_screen.dart';
+import '../../widgets/notification_bell.dart';
 
 class CustomerHome extends StatefulWidget {
   final VoidCallback onLogout;
@@ -37,7 +37,22 @@ class _CustomerHomeState extends State<CustomerHome> {
   List<Map<String, dynamic>> recentOrders = [];
   bool loading = true;
   String? userName;
+  double? _walletBalance;
   Map<String, double> _distanceCache = {};
+  int _selectedCategory = 0;
+
+  static const _categories = [
+    {"label": "Swallow",  "icon": "🍲"},
+    {"label": "Drinks",   "icon": "🥤"},
+    {"label": "Snacks",   "icon": "🍿"},
+    {"label": "Soups",    "icon": "🍜"},
+    {"label": "Pasta",    "icon": "🍝"},
+    {"label": "Burgers",  "icon": "🍔"},
+    {"label": "Shawarma", "icon": "🌯"},
+    {"label": "Rice",     "icon": "🍚"},
+    {"label": "Cakes",    "icon": "🎂"},
+    {"label": "Grills",   "icon": "🍖"},
+  ];
 
   @override
   void initState() {
@@ -48,31 +63,7 @@ class _CustomerHomeState extends State<CustomerHome> {
   Future<void> loadAll() async {
     try {
       final name = await Session.getUserName();
-      final results = await Future.wait([
-        CustomerVendorService.getVendors(),
-        _loadPopularDishes(),
-        _loadRecentOrders(),
-      ]);
-      if (!mounted) return;
-      setState(() {
-        userName = name;
-        allVendors = results[0] as List<Vendor>;
-        popularDishes = results[1] as List<PopularDish>;
-        recentOrders = results[2] as List<Map<String, dynamic>>;
-        loading = false;
-      });
-      _calculateDistances();
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => loading = false);
-    }
-  }
-
-  Future<void> _calculateDistances() async {
-    try {
-      // Try to get fresh GPS first
-      double? userLat, userLng;
-
+      double? lat, lng;
       try {
         LocationPermission perm = await Geolocator.checkPermission();
         if (perm == LocationPermission.denied) {
@@ -84,19 +75,56 @@ class _CustomerHomeState extends State<CustomerHome> {
             desiredAccuracy: LocationAccuracy.low,
             timeLimit: const Duration(seconds: 6),
           );
-          userLat = pos.latitude;
-          userLng = pos.longitude;
-          await Session.saveLocation(userLat, userLng);
+          lat = pos.latitude;
+          lng = pos.longitude;
+          await Session.saveLocation(lat, lng);
         }
+      } catch (_) {
+        final loc = await Session.getLocation();
+        lat = loc?['lat'];
+        lng = loc?['lng'];
+      }
+
+      final results = await Future.wait([
+        CustomerVendorService.getVendors(lat: lat, lng: lng),
+        _loadPopularDishes(),
+        _loadRecentOrders(),
+        CustomerWalletService.getBalance(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        userName = name;
+        allVendors = results[0] as List<Vendor>;
+        popularDishes = results[1] as List<PopularDish>;
+        recentOrders = results[2] as List<Map<String, dynamic>>;
+        _walletBalance = results[3] as double;
+        loading = false;
+      });
+      _calculateDistances();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => loading = false);
+    }
+  }
+
+  Future<void> _calculateDistances() async {
+    try {
+      double? userLat, userLng;
+      try {
+        final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.low,
+          timeLimit: const Duration(seconds: 6),
+        );
+        userLat = pos.latitude;
+        userLng = pos.longitude;
+        await Session.saveLocation(userLat, userLng);
       } catch (_) {}
 
-      // Fall back to last saved location if GPS failed
       if (userLat == null || userLng == null) {
         final loc = await Session.getLocation();
         userLat = loc?['lat'];
         userLng = loc?['lng'];
       }
-
       if (userLat == null || userLng == null) return;
 
       final cache = <String, double>{};
@@ -159,14 +187,20 @@ class _CustomerHomeState extends State<CustomerHome> {
     return "Good evening";
   }
 
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+
   @override
   Widget build(BuildContext context) {
+    final bg = _isDark ? CustomerColors.backgroundDark : CustomerColors.background;
+
     return Scaffold(
-      backgroundColor: CustomerColors.background,
+      backgroundColor: bg,
       body: SafeArea(
         child: loading
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: CircularProgressIndicator(
+                color: CustomerColors.primary))
             : RefreshIndicator(
+                color: CustomerColors.primary,
                 onRefresh: loadAll,
                 child: SingleChildScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
@@ -174,12 +208,20 @@ class _CustomerHomeState extends State<CustomerHome> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _header(),
-                      _searchBar(),
+                      const SizedBox(height: 14),
                       _adsSection(),
+                      const SizedBox(height: 14),
                       _packageDeliveryBanner(),
-                      if (recentOrders.isNotEmpty) _recentOrdersSection(),
-                      _vendorsSection(),
+                      const SizedBox(height: 20),
+                      _categoriesSection(),
+                      if (recentOrders.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+                        _recentOrdersSection(),
+                      ],
+                      const SizedBox(height: 20),
                       if (popularDishes.isNotEmpty) _popularDishesSection(),
+                      const SizedBox(height: 20),
+                      _vendorsSection(),
                       const SizedBox(height: 32),
                     ],
                   ),
@@ -193,10 +235,13 @@ class _CustomerHomeState extends State<CustomerHome> {
   Widget _header() {
     final greeting = _getGreeting();
     final firstName = userName?.split(' ').first ?? '';
+    final dark = _isDark;
+    final nameColor = dark ? Colors.white : const Color(0xFF1A1A1A);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 12, 8),
+      padding: const EdgeInsets.fromLTRB(16, 14, 12, 0),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
             child: Column(
@@ -215,128 +260,81 @@ class _CustomerHomeState extends State<CustomerHome> {
                   children: [
                     Text(
                       firstName.isNotEmpty ? firstName : "Welcome",
-                      style: const TextStyle(
-                        fontSize: 17,
+                      style: TextStyle(
+                        fontSize: 20,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF1A1A1A),
+                        color: nameColor,
                       ),
                     ),
                     const SizedBox(width: 4),
-                    const Text("👋", style: TextStyle(fontSize: 16)),
+                    const Text("👋", style: TextStyle(fontSize: 18)),
                   ],
                 ),
               ],
             ),
           ),
-          // Notification bell
-          ListenableBuilder(
-            listenable: NotificationStore.instance,
-            builder: (context, _) {
-              final unread = NotificationStore.instance.unreadCount;
-              return Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Material(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(10),
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const NotificationsScreen()),
-                      ),
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        child: const Icon(Icons.notifications_outlined,
-                            size: 22, color: Color(0xFF1A1A1A)),
-                      ),
-                    ),
-                  ),
-                  if (unread > 0)
-                    Positioned(
-                      right: -2,
-                      top: -2,
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
-                          color: CustomerColors.primary,
-                          shape: BoxShape.circle,
-                        ),
-                        constraints:
-                            const BoxConstraints(minWidth: 15, minHeight: 15),
-                        child: Text(
-                          unread > 9 ? '9+' : '$unread',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 8,
-                              fontWeight: FontWeight.bold),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                ],
-              );
-            },
+          _walletChip(dark),
+          const SizedBox(width: 10),
+          NotificationBell(
+            color: dark ? Colors.white : const Color(0xFF1A1A1A),
+            badgeColor: CustomerColors.primary,
+            fullScreen: true,
           ),
           const SizedBox(width: 8),
-          // Logo — constrained so it never dominates the header
           Image.asset('assets/images/foodrena_logo2.png', height: 26),
         ],
       ),
     );
   }
 
-  // ── SEARCH BAR ───────────────────────────────────────────────────────────
-  Widget _searchBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-      child: GestureDetector(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const CustomerSearch()),
+  Widget _walletChip(bool dark) {
+    final balance = _walletBalance ?? 0;
+    final chipBg = dark ? const Color(0xFF2C1010) : Colors.white;
+    final borderColor = dark ? Colors.grey.shade700 : Colors.grey.shade200;
+
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const CustomerWalletScreen()),
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: chipBg,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: borderColor),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(dark ? 0.2 : 0.05),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
-        child: Container(
-          height: 42,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(10),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.07),
-                blurRadius: 8,
-                offset: const Offset(0, 3),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(3),
+              decoration: const BoxDecoration(
+                color: CustomerColors.primary,
+                shape: BoxShape.circle,
               ),
-            ],
-          ),
-          child: AbsorbPointer(
-            child: TextField(
-              style: const TextStyle(fontSize: 13),
-              decoration: InputDecoration(
-                hintText: "Search kitchens or dishes...",
-                hintStyle:
-                    TextStyle(fontSize: 13, color: Colors.grey.shade400),
-                prefixIcon:
-                    Icon(Icons.search, size: 18, color: Colors.grey.shade400),
-                contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: Colors.grey.shade200),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: Colors.grey.shade200),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                      color: CustomerColors.primary, width: 1.5),
-                ),
+              child: const Icon(Icons.account_balance_wallet_outlined,
+                  color: Colors.white, size: 11),
+            ),
+            const SizedBox(width: 5),
+            Text(
+              balance > 0 ? "₦${balance.toStringAsFixed(0)}" : "₦0",
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: balance > 0
+                    ? CustomerColors.primary
+                    : (dark ? Colors.grey.shade500 : Colors.grey.shade400),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -344,27 +342,11 @@ class _CustomerHomeState extends State<CustomerHome> {
 
   // ── ADS ──────────────────────────────────────────────────────────────────
   Widget _adsSection() {
-    return SizedBox(
-      height: 90,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        scrollDirection: Axis.horizontal,
-        itemCount: 3,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (_, __) => Container(
-          width: 300,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.07),
-                blurRadius: 8,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: const AdBanner(),
-        ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: const AdBanner(),
       ),
     );
   }
@@ -372,7 +354,7 @@ class _CustomerHomeState extends State<CustomerHome> {
   // ── PACKAGE BANNER ───────────────────────────────────────────────────────
   Widget _packageDeliveryBanner() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: GestureDetector(
         onTap: () => Navigator.push(
           context,
@@ -386,14 +368,7 @@ class _CustomerHomeState extends State<CustomerHome> {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF1E3A5F).withOpacity(0.3),
-                blurRadius: 12,
-                offset: const Offset(0, 5),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(16),
           ),
           child: Row(
             children: [
@@ -411,37 +386,29 @@ class _CustomerHomeState extends State<CustomerHome> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Send a Package',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14),
-                    ),
+                    const Text('Send a Package',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14)),
                     const SizedBox(height: 2),
-                    Text(
-                      'Deliver anything across the city',
-                      style: TextStyle(
-                          color: Colors.white.withOpacity(0.7),
-                          fontSize: 11),
-                    ),
+                    Text('Deliver anything across the city',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 11)),
                   ],
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  'Send now',
-                  style: TextStyle(
-                      color: Color(0xFF1E3A5F),
-                      fontWeight: FontWeight.bold,
-                      fontSize: 11),
-                ),
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8)),
+                child: const Text('Send now',
+                    style: TextStyle(
+                        color: Color(0xFF1E3A5F),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11)),
               ),
             ],
           ),
@@ -450,8 +417,85 @@ class _CustomerHomeState extends State<CustomerHome> {
     );
   }
 
+  // ── CATEGORIES ───────────────────────────────────────────────────────────
+  Widget _categoriesSection() {
+    final dark = _isDark;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          child: Text("Categories",
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: dark ? Colors.white : Colors.black)),
+        ),
+        SizedBox(
+          height: 66,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            scrollDirection: Axis.horizontal,
+            itemCount: _categories.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (_, i) {
+              final cat = _categories[i];
+              final isSelected = _selectedCategory == i;
+              return GestureDetector(
+                onTap: () => setState(() => _selectedCategory = i),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 64,
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? CustomerColors.primary
+                        : (dark
+                            ? const Color(0xFF2C1010)
+                            : Colors.white),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isSelected
+                          ? CustomerColors.primary
+                          : (dark
+                              ? Colors.grey.shade800
+                              : Colors.grey.shade200),
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(cat["icon"]!,
+                          style: const TextStyle(fontSize: 22)),
+                      const SizedBox(height: 4),
+                      Text(
+                        cat["label"]!,
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                          color: isSelected
+                              ? Colors.white
+                              : (dark
+                                  ? Colors.grey.shade400
+                                  : Colors.grey.shade700),
+                        ),
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   // ── RECENT ORDERS ────────────────────────────────────────────────────────
   Widget _recentOrdersSection() {
+    final dark = _isDark;
     final latest = recentOrders.first;
     final orderId = (latest['_id'] ?? '').toString();
     final shortId = orderId.length > 8
@@ -459,47 +503,37 @@ class _CustomerHomeState extends State<CustomerHome> {
         : orderId.toUpperCase();
     final status = latest['status'] ?? '';
     final total = latest['total'] ?? latest['totalAmount'] ?? 0;
-
     final items = latest['items'];
     String itemsSummary = '';
     if (items is List && items.isNotEmpty) {
       final first = items.first;
       final name = first['name'] ?? first['menuItem']?['name'] ?? 'Item';
-      itemsSummary =
-          items.length > 1 ? '$name +${items.length - 1} more' : name;
+      itemsSummary = items.length > 1 ? '$name +${items.length - 1} more' : name;
     }
 
+    final cardColor = dark ? const Color(0xFF2C1010) : Colors.white;
+    final borderColor = dark ? Colors.grey.shade800 : Colors.grey.shade200;
+    final subtextColor = dark ? Colors.grey.shade400 : Colors.grey.shade500;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _sectionHeader(
             "Recent order",
-            onSeeMore: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => const CustomerOrdersScreen()),
-            ),
+            onSeeMore: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const CustomerOrdersScreen())),
           ),
           GestureDetector(
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => const CustomerOrdersScreen()),
-            ),
+            onTap: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const CustomerOrdersScreen())),
             child: Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade200),
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withOpacity(0.08),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4)),
-                ],
+                color: cardColor,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: borderColor),
               ),
               child: Row(
                 children: [
@@ -518,16 +552,17 @@ class _CustomerHomeState extends State<CustomerHome> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('Order #$shortId',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w700, fontSize: 13)),
+                            style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                                color: dark ? Colors.white : Colors.black)),
                         if (itemsSummary.isNotEmpty) ...[
                           const SizedBox(height: 2),
                           Text(itemsSummary,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey.shade500)),
+                                  fontSize: 12, color: subtextColor)),
                         ],
                         const SizedBox(height: 4),
                         Row(
@@ -544,8 +579,9 @@ class _CustomerHomeState extends State<CustomerHome> {
                       ],
                     ),
                   ),
-                  const Icon(Icons.chevron_right,
-                      color: Colors.grey, size: 20),
+                  Icon(Icons.chevron_right,
+                      color: dark ? Colors.grey.shade500 : Colors.grey,
+                      size: 20),
                 ],
               ),
             ),
@@ -576,87 +612,90 @@ class _CustomerHomeState extends State<CustomerHome> {
         color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(
-        status,
-        style: TextStyle(
-            color: color, fontSize: 10, fontWeight: FontWeight.w600),
-      ),
+      child: Text(status,
+          style: TextStyle(
+              color: color, fontSize: 10, fontWeight: FontWeight.w600)),
     );
   }
 
-  // ── VENDORS ──────────────────────────────────────────────────────────────
+  /// ── POPULAR DISHES — horizontal scroll ───────────────────────────────────
+  Widget _popularDishesSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: _sectionHeader("Most popular dishes"),
+        ),
+        SizedBox(
+          height: 150,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            scrollDirection: Axis.horizontal,
+            itemCount: popularDishes.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (_, i) => SizedBox(
+              width: 140,
+              child: _dishCard(popularDishes[i]),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── NEARBY KITCHENS ──────────────────────────────────────────────────────
   Widget _vendorsSection() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _sectionHeader(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: _sectionHeader(
             "Nearby kitchens",
             onSeeMore: () => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => AllVendorsScreen(vendors: allVendors),
-              ),
+                  builder: (_) => AllVendorsScreen(vendors: allVendors)),
             ),
-          ),
-          if (allVendors.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(child: Text("No vendors available")),
-            )
-          else
-            SizedBox(
-              height: 185,
-              child: ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                scrollDirection: Axis.horizontal,
-                itemCount: allVendors.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
-                itemBuilder: (_, i) => _vendorCard(allVendors[i]),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  // ── POPULAR DISHES ───────────────────────────────────────────────────────
-  Widget _popularDishesSection() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _sectionHeader("Most popular dishes"),
+          )
+        ),
+        if (allVendors.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: Text("No vendors available")),
+          )
+        else
           SizedBox(
-            height: 200,
+            height: 185,
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               scrollDirection: Axis.horizontal,
-              itemCount: popularDishes.length,
+              itemCount: allVendors.length,
               separatorBuilder: (_, __) => const SizedBox(width: 12),
-              itemBuilder: (_, i) => _dishCard(popularDishes[i]),
+              itemBuilder: (_, i) => _vendorCard(allVendors[i]),
             ),
           ),
-        ],
-      ),
+      ],
     );
   }
 
   Widget _sectionHeader(String title, {VoidCallback? onSeeMore}) {
+    final dark = _isDark;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 10),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(title,
-              style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.w700)),
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: dark ? Colors.white : Colors.black)),
           if (onSeeMore != null)
             GestureDetector(
               onTap: onSeeMore,
-              child: Text("See all",
+              child: const Text("See all",
                   style: TextStyle(
                       fontSize: 12,
                       color: CustomerColors.primary,
@@ -669,8 +708,13 @@ class _CustomerHomeState extends State<CustomerHome> {
 
   // ── VENDOR CARD ──────────────────────────────────────────────────────────
   Widget _vendorCard(Vendor vendor) {
+    final dark = _isDark;
     final rating = vendor.rating ?? 0;
-    final dist   = _distanceCache[vendor.id];
+    final dist = _distanceCache[vendor.id];
+    final cardColor = dark ? const Color(0xFF2C1010) : Colors.white;
+    final borderColor = dark ? Colors.grey.shade800 : Colors.grey.shade200;
+    final nameColor = dark ? Colors.white : Colors.black;
+    final distColor = dark ? Colors.grey.shade400 : Colors.grey.shade500;
 
     return GestureDetector(
       onTap: () {
@@ -686,9 +730,8 @@ class _CustomerHomeState extends State<CustomerHome> {
             builder: (ctx) {
               final cart = CartProvider.of(context);
               return CartProvider(
-                controller: cart,
-                child: VendorDetailsScreen(vendor: vendor),
-              );
+                  controller: cart,
+                  child: VendorDetailsScreen(vendor: vendor));
             },
           ),
         );
@@ -698,35 +741,25 @@ class _CustomerHomeState extends State<CustomerHome> {
         height: 180,
         child: DecoratedBox(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            color: Colors.white,
-            border: Border.all(color: Colors.grey.shade200),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3)),
-            ],
+            borderRadius: BorderRadius.circular(14),
+            color: cardColor,
+            border: Border.all(color: borderColor),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ── Image: fixed 110px ────────────────────────────
                 SizedBox(
                   height: 110,
                   width: double.infinity,
                   child: vendor.logoUrl != null
-                      ? Image.network(
-                          vendor.logoUrl!,
+                      ? Image.network(vendor.logoUrl!,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _vendorPlaceholder(),
-                        )
-                      : _vendorPlaceholder(),
+                          errorBuilder: (_, __, ___) =>
+                              _vendorPlaceholder(dark))
+                      : _vendorPlaceholder(dark),
                 ),
-
-                // ── Info: remaining 105px ─────────────────────────
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(8, 7, 8, 7),
@@ -734,16 +767,13 @@ class _CustomerHomeState extends State<CustomerHome> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // Name
-                        Text(
-                          vendor.businessName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w600, fontSize: 12),
-                        ),
-
-                        // Open/Closed + Rating
+                        Text(vendor.businessName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 12,
+                                color: nameColor)),
                         Row(
                           children: [
                             Container(
@@ -777,30 +807,24 @@ class _CustomerHomeState extends State<CustomerHome> {
                                   fontSize: 10,
                                   fontWeight: FontWeight.w600,
                                   color: rating > 0
-                                      ? Colors.black87
-                                      : Colors.grey.shade500),
+                                      ? (dark
+                                          ? Colors.white70
+                                          : Colors.black87)
+                                      : distColor),
                             ),
                           ],
                         ),
-
-                        // Distance
                         Row(
                           children: [
                             Icon(Icons.location_on_outlined,
-                                size: 11,
-                                color: dist != null
-                                    ? Colors.grey.shade500
-                                    : Colors.grey.shade300),
+                                size: 11, color: distColor),
                             const SizedBox(width: 2),
                             Text(
                               dist != null
                                   ? _formatDistance(dist)
                                   : "Locating...",
-                              style: TextStyle(
-                                  fontSize: 10,
-                                  color: dist != null
-                                      ? Colors.grey.shade500
-                                      : Colors.grey.shade400),
+                              style:
+                                  TextStyle(fontSize: 10, color: distColor),
                             ),
                           ],
                         ),
@@ -816,14 +840,20 @@ class _CustomerHomeState extends State<CustomerHome> {
     );
   }
 
-  Widget _vendorPlaceholder() => Container(
-        color: Colors.grey.shade100,
-        child: const Center(
-            child: Icon(Icons.store, size: 30, color: Colors.grey)),
+  Widget _vendorPlaceholder(bool dark) => Container(
+        color: dark ? const Color(0xFF3A1515) : Colors.grey.shade100,
+        child: Center(
+            child: Icon(Icons.store,
+                size: 30,
+                color: dark ? Colors.grey.shade600 : Colors.grey)),
       );
 
-
   Widget _dishCard(PopularDish dish) {
+    final dark = _isDark;
+    final cardColor = dark ? const Color(0xFF2C1010) : Colors.white;
+    final borderColor = dark ? Colors.grey.shade800 : Colors.grey.shade200;
+    final nameColor = dark ? Colors.white : Colors.black;
+
     return GestureDetector(
       onTap: () => Navigator.push(
         context,
@@ -831,64 +861,57 @@ class _CustomerHomeState extends State<CustomerHome> {
           builder: (ctx) {
             final cart = CartProvider.of(context);
             return CartProvider(
-              controller: cart,
-              child: DishDetailScreen(dish: dish),
-            );
+                controller: cart, child: DishDetailScreen(dish: dish));
           },
         ),
       ),
       child: Container(
-        width: 150,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          color: Colors.white,
-          border: Border.all(color: Colors.grey.shade200),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.07),
-                blurRadius: 8,
-                offset: const Offset(0, 3)),
-          ],
+          color: cardColor,
+          border: Border.all(color: borderColor),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ClipRRect(
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(11)),
-              child: SizedBox(
-                height: 100,
-                width: double.infinity,
-                child: dish.imageUrl != null
-                    ? Image.network(dish.imageUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
-                            const _DishPlaceholder())
-                    : const _DishPlaceholder(),
+            Expanded(
+              child: ClipRRect(
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(11)),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: dish.imageUrl != null
+                      ? Image.network(dish.imageUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) =>
+                              _DishPlaceholder(dark: dark))
+                      : _DishPlaceholder(dark: dark),
+                ),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(dish.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 12)),
-                  const SizedBox(height: 2),
+                      style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                          color: nameColor)),
+                  const SizedBox(height: 1),
                   Text("₦${dish.price.toStringAsFixed(0)}",
                       style: const TextStyle(
                           color: CustomerColors.primary,
                           fontWeight: FontWeight.bold,
-                          fontSize: 12)),
-                  const SizedBox(height: 1),
+                          fontSize: 11)),
                   Text(dish.vendorName ?? "",
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          color: Colors.grey, fontSize: 10)),
+                          color: Colors.grey, fontSize: 9)),
                 ],
               ),
             ),
@@ -900,14 +923,16 @@ class _CustomerHomeState extends State<CustomerHome> {
 }
 
 class _DishPlaceholder extends StatelessWidget {
-  const _DishPlaceholder();
+  final bool dark;
+  const _DishPlaceholder({this.dark = false});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: Colors.grey.shade100,
-      child: const Center(
-        child: Icon(Icons.fastfood, color: Colors.grey, size: 28),
+      color: dark ? const Color(0xFF3A1515) : Colors.grey.shade100,
+      child: Center(
+        child: Icon(Icons.fastfood,
+            color: dark ? Colors.grey.shade600 : Colors.grey, size: 24),
       ),
     );
   }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import '../../core/theme/customer_theme.dart';
+import 'package:provider/provider.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/theme/theme_provider.dart';
 import '../../core/cart/cart_provider.dart';
 import '../../widgets/app_drawer.dart';
 
@@ -28,6 +30,11 @@ class _CustomerNavShellState extends State<CustomerNavShell> {
 
   @override
   Widget build(BuildContext context) {
+    final themeProvider = context.watch<ThemeProvider>();
+    final isDark = themeProvider.mode == ThemeMode.dark ||
+        (themeProvider.mode == ThemeMode.system &&
+            MediaQuery.platformBrightnessOf(context) == Brightness.dark);
+
     final screens = [
       CustomerHome(
         onLogout: widget.onLogout,
@@ -43,7 +50,7 @@ class _CustomerNavShellState extends State<CustomerNavShell> {
     ];
 
     return Theme(
-      data: customerTheme,
+      data: isDark ? customerDarkTheme : customerLightTheme,
       child: Scaffold(
         drawer: AppDrawer(
           onRoleSwitch: widget.onRoleSwitch ?? () {},

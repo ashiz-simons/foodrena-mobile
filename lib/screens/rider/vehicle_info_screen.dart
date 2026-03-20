@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
+import '../../utils/session.dart';
 
 class VehicleInfoScreen extends StatefulWidget {
   final VoidCallback onCompleted;
@@ -34,18 +35,34 @@ class _VehicleInfoScreenState extends State<VehicleInfoScreen> {
 
     try {
       await ApiService.patch("/riders/vehicle", {
-        "vehicleType": selectedVehicle,
+        "vehicleType":  selectedVehicle,
         "vehiclePlate": plateCtrl.text.trim(),
       });
 
       if (!mounted) return;
+
+      // Switch role to rider so the token/session is fresh before routing
+      try {
+        final res = await ApiService.post("/auth/switch-role", {"role": "rider"});
+        await Session.saveToken(res["token"]);
+        await Session.saveUser(res["user"]);
+      } catch (_) {
+        // If already rider, switch-role may 400 — that's fine, continue
+      }
+
+      if (!mounted) return;
+
+      // Pop this screen first, THEN call onCompleted so RoleRouter
+      // rebuilds underneath a clean stack
+      Navigator.of(context).popUntil((route) => route.isFirst);
       widget.onCompleted();
     } catch (e) {
       if (!mounted) return;
-      setState(() => error = e.toString().replaceAll("Exception: ", ""));
+      setState(() {
+        error = e.toString().replaceAll("Exception: ", "");
+        loading = false;
+      });
     }
-
-    if (mounted) setState(() => loading = false);
   }
 
   @override
@@ -57,8 +74,10 @@ class _VehicleInfoScreenState extends State<VehicleInfoScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("To become a rider, we need your vehicle details.",
-                style: TextStyle(fontSize: 15, color: Colors.grey)),
+            const Text(
+              "To become a rider, we need your vehicle details.",
+              style: TextStyle(fontSize: 15, color: Colors.grey),
+            ),
             const SizedBox(height: 24),
 
             const Text("Vehicle Type",
@@ -130,8 +149,7 @@ class _VehicleInfoScreenState extends State<VehicleInfoScreen> {
                 onPressed: loading ? null : _save,
                 child: loading
                     ? const SizedBox(
-                        height: 18,
-                        width: 18,
+                        height: 18, width: 18,
                         child: CircularProgressIndicator(strokeWidth: 2))
                     : const Text("Save & Continue"),
               ),

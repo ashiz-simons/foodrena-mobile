@@ -95,11 +95,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
       if (!mounted) return;
 
-      Navigator.pushReplacement(
+      Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
           builder: (_) => OrderStatusScreen(orderId: widget.orderId),
         ),
+        (route) => route.isFirst,
       );
     } catch (e) {
       if (!mounted) return;

@@ -20,6 +20,7 @@ class RoleRouter extends StatefulWidget {
 
 class _RoleRouterState extends State<RoleRouter> {
   Widget? home;
+  String? _currentRole; // track role so key changes force full rebuild
 
   @override
   void initState() {
@@ -28,40 +29,70 @@ class _RoleRouterState extends State<RoleRouter> {
   }
 
   Future<void> _resolveHome() async {
-    if (mounted) setState(() => home = null); // show loading while resolving
+    if (mounted) setState(() => home = null);
 
     final user = await Session.getUser();
-    final role = user?["role"];
+    final role = user?["role"] as String? ?? "customer";
+
+    // Role changed — clear any stale navigation stack first
+    if (_currentRole != null && _currentRole != role && mounted) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    }
+    _currentRole = role;
 
     Widget resolved;
 
     switch (role) {
       case "rider":
         resolved = RiderHome(
+          key: const ValueKey("riderHome"), // force fresh init on rebuild
           onLogout: _handleLogout,
-          onRoleSwitch: _resolveHome, // 👈 pass switch callback
+          onRoleSwitch: _resolveHome,
         );
         break;
       case "vendor":
-        final vendorRes = await ApiService.get("/vendors/me");
-        if (vendorRes["onboardingCompleted"] == true) {
-          resolved = VendorHome(
-            onLogout: _handleLogout,
-            onRoleSwitch: _resolveHome, // 👈 pass switch callback
-          );
-        } else {
-          resolved = VendorOnboardingScreen(onCompleted: _resolveHome);
+        try {
+          final vendorRes = await ApiService.get("/vendors/me");
+          if (vendorRes["onboardingCompleted"] == true) {
+            resolved = VendorHome(
+              key: const ValueKey("vendorHome"),
+              onLogout: _handleLogout,
+              onRoleSwitch: _resolveHome,
+            );
+          } else {
+            resolved = VendorOnboardingScreen(
+              key: const ValueKey("vendorOnboarding"),
+              // onCompleted: when vendor leaves without finishing,
+              // switch them back to customer so they aren't stuck.
+              onCompleted: _resolveHome,
+              onLeave: _switchBackToCustomer,
+            );
+          }
+        } catch (_) {
+          // Vendor profile fetch failed — fall back to customer
+          await _switchBackToCustomer();
+          return;
         }
         break;
       default:
         resolved = CustomerNavShell(
+          key: const ValueKey("customerShell"),
           onLogout: _handleLogout,
-          onRoleSwitch: _resolveHome, // 👈 pass switch callback
+          onRoleSwitch: _resolveHome,
         );
     }
 
     if (!mounted) return;
     setState(() => home = resolved);
+  }
+
+  Future<void> _switchBackToCustomer() async {
+    try {
+      final res = await ApiService.post("/auth/switch-role", {"role": "customer"});
+      await Session.saveToken(res["token"]);
+      await Session.saveUser(res["user"]);
+    } catch (_) {}
+    _resolveHome();
   }
 
   Future<void> _handleLogout() async {

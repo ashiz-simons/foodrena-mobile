@@ -2,12 +2,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../services/rider_service.dart';
+import '../../services/socket_service.dart';
+import '../../services/notification_store.dart';
+import '../../core/theme/app_theme.dart';
+import '../shared/chat_screen.dart';
+import '../shared/incoming_call_screen.dart';
 
 const bool MAPS_ENABLED = false;
 
 class ActiveOrderScreen extends StatefulWidget {
   final Map order;
-
   const ActiveOrderScreen({super.key, required this.order});
 
   @override
@@ -17,26 +21,85 @@ class ActiveOrderScreen extends StatefulWidget {
 class _ActiveOrderScreenState extends State<ActiveOrderScreen> {
   late Map order;
   bool loading = false;
+  int _unreadCount = 0;
+  String _customerName = "Customer";
 
   GoogleMapController? mapController;
   LatLng? currentPosition;
   Marker? riderMarker;
 
+  bool get _dark => Theme.of(context).brightness == Brightness.dark;
+  Color get _card => _dark ? const Color(0xFF2A1E0C) : Colors.white;
+  Color get _border => _dark ? Colors.grey.shade800 : Colors.grey.shade200;
+  Color get _text => _dark ? Colors.white : Colors.black;
+  Color get _sub => _dark ? Colors.grey.shade400 : Colors.grey;
+
   @override
   void initState() {
     super.initState();
     order = widget.order;
-
+    _customerName = order["user"]?["name"] ?? "Customer";
+    _joinOrderRoom();
     Future.delayed(const Duration(seconds: 1), () {
       if (!mounted) return;
       _updateRiderPosition(const LatLng(6.5244, 3.3792));
     });
   }
 
+  Future<void> _joinOrderRoom() async {
+    final orderId = (order["_id"] ?? "").toString();
+    if (orderId.isEmpty) return;
+    await SocketService.connectToRoom("order_$orderId");
+
+    // Listen for incoming calls
+    SocketService.on("call_invite", (data) {
+      if (!mounted) return;
+      final callOrderId = data["orderId"]?.toString() ?? "";
+      if (callOrderId != orderId) return;
+
+      final callerName = data["callerName"] ?? "Customer";
+      final channelName = data["channelName"] ?? callOrderId;
+      final appId = data["appId"] ?? "e03b6ecb7bcf4e279d314411ec817e7e";
+      final token = data["token"];
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => IncomingCallScreen(
+            orderId:     callOrderId,
+            callerName:  callerName,
+            senderRole:  "rider",
+            channelName: channelName,
+            appId:       appId,
+            token:       token,
+          ),
+        ),
+      );
+    });
+
+    SocketService.on("receive_message", (data) {
+      if (!mounted) return;
+      final msgOrderId = data["orderId"]?.toString() ?? "";
+      if (msgOrderId != orderId) return;
+      final senderRole = data["senderRole"] ?? "";
+      if (senderRole == "rider") return; // don't notify self
+
+      setState(() => _unreadCount++);
+
+      NotificationStore.instance.add(AppNotification(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        title: "New message from $_customerName",
+        body: data["text"] ?? "New message",
+        type: "chat",
+        receivedAt: DateTime.now(),
+      ));
+    });
+  }
+
   void _updateRiderPosition(LatLng position) {
     currentPosition = position;
     if (!MAPS_ENABLED) return;
-
     setState(() {
       riderMarker = Marker(
         markerId: const MarkerId("rider"),
@@ -44,93 +107,142 @@ class _ActiveOrderScreenState extends State<ActiveOrderScreen> {
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
       );
     });
-
-    mapController?.animateCamera(
-      CameraUpdate.newLatLngZoom(position, 15),
-    );
+    mapController?.animateCamera(CameraUpdate.newLatLngZoom(position, 15));
   }
 
   Future<void> updateStatus(String action) async {
     setState(() => loading = true);
     try {
-      if (action == "arrived") await RiderService.arrived(order["_id"]);
+      if (action == "arrived")    await RiderService.arrived(order["_id"]);
       if (action == "start-trip") await RiderService.startTrip(order["_id"]);
-      if (action == "complete") await RiderService.complete(order["_id"]);
+      if (action == "complete")   await RiderService.complete(order["_id"]);
       if (mounted) setState(() {});
     } catch (_) {}
     if (mounted) setState(() => loading = false);
   }
 
+  @override
+  void dispose() {
+    final orderId = (order["_id"] ?? "").toString();
+    SocketService.off("receive_message");
+    SocketService.off("call_invite");
+    SocketService.emit("leaveRoom", orderId);
+    super.dispose();
+  }
+
   Widget buildActionButton() {
     switch (order["status"]) {
       case "accepted":
-        return buildButton("Mark Arrived", "arrived");
+        return _actionBtn("Mark Arrived", "arrived", Colors.blue);
       case "arrived":
-        return buildButton("Start Trip", "start-trip");
+        return _actionBtn("Start Trip", "start-trip", Colors.orange);
       case "in_transit":
-        return buildButton("Complete Delivery", "complete");
+        return _actionBtn("Complete Delivery", "complete", Colors.green);
       case "completed":
-        return const Text("Delivery Completed",
-            style: TextStyle(
-                color: Colors.green,
-                fontWeight: FontWeight.bold,
-                fontSize: 16));
+        return const Center(
+          child: Text("Delivery Completed",
+              style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 16)));
       default:
         return const SizedBox();
     }
   }
 
-  Widget buildButton(String text, String action) {
+  Widget _actionBtn(String text, String action, Color color) {
     return SizedBox(
       width: double.infinity,
-      height: 48,
+      height: 50,
       child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          elevation: 0,
+        ),
         onPressed: loading ? null : () => updateStatus(action),
         child: loading
             ? const SizedBox(
-                height: 22,
-                width: 22,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.white))
-            : Text(text),
+                height: 22, width: 22,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+            : Text(text, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final customerName = order["user"]?["name"] ?? "Customer";
+    final dark = _dark;
+    final customerName  = order["user"]?["name"] ?? "Customer";
     final customerPhone = order["user"]?["phone"] ?? "";
-    // deliveryAddress is an object {street, city, state, lat, lng}
-    final _addr = order["deliveryAddress"];
+    final addrRaw = order["deliveryAddress"];
     String deliveryAddress = "No address provided";
-    if (_addr is Map) {
-      final parts = [
-        _addr['street'],
-        _addr['state'],
-        _addr['city'],
-      ].where((p) => p != null && p.toString().isNotEmpty).toList();
+    if (addrRaw is Map) {
+      final parts = [addrRaw['street'], addrRaw['state'], addrRaw['city']]
+          .where((p) => p != null && p.toString().isNotEmpty)
+          .toList();
       if (parts.isNotEmpty) deliveryAddress = parts.join(', ');
-    } else if (_addr is String && _addr.isNotEmpty) {
-      deliveryAddress = _addr;
+    } else if (addrRaw is String && addrRaw.isNotEmpty) {
+      deliveryAddress = addrRaw;
     }
-    final vendorName = order["vendor"]?["businessName"] ??
-        order["vendor"]?["name"] ??
-        "Vendor";
+    final vendorName    = order["vendor"]?["businessName"] ?? order["vendor"]?["name"] ?? "Vendor";
     final vendorAddress = order["pickupLocation"]?["address"] ?? "";
-    final items = order["items"] is List ? order["items"] as List : [];
-    final total = order["total"] ?? 0;
-    final deliveryFee = order["deliveryFee"] ?? 0;
-    final orderId = (order["_id"] ?? "").toString();
-    final shortId = orderId.length > 8
+    final items         = order["items"] is List ? order["items"] as List : [];
+    final total         = order["total"] ?? 0;
+    final deliveryFee   = order["deliveryFee"] ?? 0;
+    final orderId       = (order["_id"] ?? "").toString();
+    final shortId       = orderId.length > 8
         ? orderId.substring(orderId.length - 8).toUpperCase()
         : orderId.toUpperCase();
 
     return Scaffold(
-      appBar: AppBar(title: Text("Order #$shortId")),
+      backgroundColor: dark ? const Color(0xFF1A1208) : const Color(0xFFF5F5F5),
+      appBar: AppBar(
+        title: Text("Order #$shortId"),
+        backgroundColor: dark ? const Color(0xFF1A1208) : null,
+        foregroundColor: dark ? Colors.white : null,
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          setState(() => _unreadCount = 0);
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ChatScreen(
+                orderId: orderId,
+                senderRole: "rider",
+                recipientName: _customerName,
+              ),
+            ),
+          );
+        },
+        backgroundColor: Colors.teal,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            const Icon(Icons.chat_rounded, color: Colors.white),
+            if (_unreadCount > 0)
+              Positioned(
+                top: -6,
+                right: -6,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    _unreadCount > 9 ? "9+" : "$_unreadCount",
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
       body: Column(
         children: [
-          // Map / placeholder
           Expanded(
             flex: 2,
             child: MAPS_ENABLED
@@ -144,10 +256,8 @@ class _ActiveOrderScreenState extends State<ActiveOrderScreen> {
                     markers: riderMarker != null ? {riderMarker!} : {},
                     onMapCreated: (c) => mapController = c,
                   )
-                : const _MapPlaceholder(),
+                : _MapPlaceholder(dark: dark),
           ),
-
-          // Details panel
           Expanded(
             flex: 3,
             child: SingleChildScrollView(
@@ -155,114 +265,100 @@ class _ActiveOrderScreenState extends State<ActiveOrderScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Customer info
                   _infoCard(
                     icon: Icons.person_outline,
                     iconColor: Colors.blue,
                     title: 'Customer',
+                    dark: dark,
                     children: [
                       Text(customerName,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w700, fontSize: 15)),
+                          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: _text)),
                       if (customerPhone.isNotEmpty) ...[
                         const SizedBox(height: 2),
-                        Text(customerPhone,
-                            style: const TextStyle(
-                                fontSize: 13, color: Colors.grey)),
+                        Text(customerPhone, style: TextStyle(fontSize: 13, color: _sub)),
                       ],
                     ],
                   ),
                   const SizedBox(height: 10),
 
-                  // Delivery address
                   _infoCard(
                     icon: Icons.location_on_outlined,
                     iconColor: Colors.orange,
                     title: 'Deliver to',
+                    dark: dark,
                     children: [
-                      Text(deliveryAddress.toString(),
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w600, fontSize: 14)),
+                      Text(deliveryAddress,
+                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: _text)),
                     ],
                   ),
                   const SizedBox(height: 10),
 
-                  // Pickup location
                   _infoCard(
                     icon: Icons.store_outlined,
                     iconColor: Colors.green,
                     title: 'Pick up from',
+                    dark: dark,
                     children: [
                       Text(vendorName,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w700, fontSize: 14)),
+                          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: _text)),
                       if (vendorAddress.isNotEmpty) ...[
                         const SizedBox(height: 2),
-                        Text(vendorAddress.toString(),
-                            style: const TextStyle(
-                                fontSize: 12, color: Colors.grey)),
+                        Text(vendorAddress.toString(), style: TextStyle(fontSize: 12, color: _sub)),
                       ],
                     ],
                   ),
                   const SizedBox(height: 10),
 
-                  // Items
                   _infoCard(
                     icon: Icons.receipt_long_outlined,
                     iconColor: Colors.purple,
                     title: 'Order (${items.length} item${items.length == 1 ? '' : 's'})',
+                    dark: dark,
                     children: [
                       ...items.map((item) {
-                        final name = item['name'] ??
-                            item['menuItem']?['name'] ??
-                            'Item';
-                        final qty = item['quantity'] ?? 1;
+                        final name  = item['name'] ?? item['menuItem']?['name'] ?? 'Item';
+                        final qty   = item['quantity'] ?? 1;
                         final price = item['price'] ?? 0;
                         return Padding(
                           padding: const EdgeInsets.symmetric(vertical: 3),
                           child: Row(
                             children: [
                               Text('${qty}x ',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13)),
-                              Expanded(
-                                  child: Text(name,
-                                      style:
-                                          const TextStyle(fontSize: 13))),
-                              Text('₦$price',
-                                  style: const TextStyle(fontSize: 13)),
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: _text)),
+                              Expanded(child: Text(name, style: TextStyle(fontSize: 13, color: _text))),
+                              Text('₦$price', style: TextStyle(fontSize: 13, color: _text)),
                             ],
                           ),
                         );
                       }),
-                      const Divider(height: 16),
+                      Divider(height: 16, color: _border),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('Delivery fee',
-                              style: TextStyle(
-                                  fontSize: 13, color: Colors.grey)),
-                          Text('₦$deliveryFee',
-                              style: const TextStyle(fontSize: 13)),
+                          Text('Delivery fee', style: TextStyle(fontSize: 13, color: _sub)),
+                          Text('₦$deliveryFee', style: TextStyle(fontSize: 13, color: _text)),
                         ],
                       ),
                       const SizedBox(height: 4),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('Total',
-                              style: TextStyle(fontWeight: FontWeight.bold)),
+                          Text('Total', style: TextStyle(fontWeight: FontWeight.bold, color: _text)),
+                          const Text('₦', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange)),
+                        ],
+                      ),
+                      // total on same row
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const SizedBox(),
                           Text('₦$total',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.orange)),
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.orange)),
                         ],
                       ),
                     ],
                   ),
                   const SizedBox(height: 16),
-
                   buildActionButton(),
                 ],
               ),
@@ -278,16 +374,17 @@ class _ActiveOrderScreenState extends State<ActiveOrderScreen> {
     required Color iconColor,
     required String title,
     required List<Widget> children,
+    required bool dark,
   }) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _card,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: _border),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 4)
+          BoxShadow(color: Colors.black.withOpacity(dark ? 0.2 : 0.03), blurRadius: 4),
         ],
       ),
       child: Row(
@@ -309,7 +406,7 @@ class _ActiveOrderScreenState extends State<ActiveOrderScreen> {
                 Text(title,
                     style: TextStyle(
                         fontSize: 11,
-                        color: Colors.grey.shade500,
+                        color: _sub,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.4)),
                 const SizedBox(height: 4),
@@ -324,24 +421,27 @@ class _ActiveOrderScreenState extends State<ActiveOrderScreen> {
 }
 
 class _MapPlaceholder extends StatelessWidget {
-  const _MapPlaceholder();
+  final bool dark;
+  const _MapPlaceholder({this.dark = false});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      color: Colors.grey.shade200,
+      color: dark ? const Color(0xFF2A1E0C) : Colors.grey.shade200,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
-        children: const [
-          Icon(Icons.location_on, size: 60, color: Colors.orange),
-          SizedBox(height: 12),
+        children: [
+          const Icon(Icons.location_on, size: 60, color: Colors.orange),
+          const SizedBox(height: 12),
           Text('Tracking delivery…',
-              style:
-                  TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          SizedBox(height: 6),
+              style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: dark ? Colors.white : Colors.black)),
+          const SizedBox(height: 6),
           Text('Live map will activate shortly',
-              style: TextStyle(color: Colors.black54)),
+              style: TextStyle(color: dark ? Colors.grey.shade400 : Colors.black54)),
         ],
       ),
     );

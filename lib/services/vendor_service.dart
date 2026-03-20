@@ -41,7 +41,32 @@ class VendorService {
 
   static Future<void> updateProfile(Map data) async {
     await ApiService.put('/vendors/me', data);
-    }
+  }
+
+  // ── Preferred Riders ────────────────────────────────────────
+
+  static Future<Map<String, dynamic>> getPreferredRiders() async {
+    final res = await ApiService.get('/vendors/preferred-riders');
+    return res is Map<String, dynamic> ? res : {};
+  }
+
+  static Future<void> addPreferredRider(String riderId) async {
+    await ApiService.post('/vendors/preferred-riders/$riderId', {});
+  }
+
+  static Future<void> removePreferredRider(String riderId) async {
+    await ApiService.delete('/vendors/preferred-riders/$riderId');
+  }
+
+  static Future<void> updatePreferredRiderSettings({
+    required bool usePreferredRiders,
+    required bool fallbackToAutoAssign,
+  }) async {
+    await ApiService.patch('/vendors/preferred-riders/settings', {
+      'usePreferredRiders': usePreferredRiders,
+      'fallbackToAutoAssign': fallbackToAutoAssign,
+    });
+  }
 
     /// Get vendor bank
     static Future<Map<String, dynamic>> getBank() async {

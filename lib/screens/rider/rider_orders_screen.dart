@@ -3,6 +3,13 @@ import 'package:flutter/material.dart';
 import '../../services/rider_service.dart';
 import 'active_order_screen.dart';
 import '../../services/socket_service.dart';
+import '../shared/chat_screen.dart';
+import '../shared/call_screen.dart';
+import 'order_alert_screen.dart';
+import '../../services/order_alert_service.dart';
+import '../../services/notification_store.dart';
+import '../../core/theme/app_theme.dart';
+import '../../utils/session.dart';
 
 class RiderOrdersScreen extends StatefulWidget {
   const RiderOrdersScreen({super.key});
@@ -16,22 +23,93 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
   String error = "";
   List orders = [];
   bool hasNewOrders = false;
+  Map<String, int> _unreadCounts = {};
+  String? _myUserId;
 
   @override
   void initState() {
     super.initState();
-    loadOrders();
+    _init();
 
     SocketService.on("new_order", (data) {
       if (!mounted) return;
       setState(() => hasNewOrders = true);
-      loadOrders();
+
+      NotificationStore.instance.add(AppNotification(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        title: "New Order!",
+        body: "You have a new delivery request.",
+        type: "new_order",
+        receivedAt: DateTime.now(),
+      ));
+
+      OrderAlertService.startAlert();
+
+      final orderData = data is Map<String, dynamic>
+          ? data
+          : <String, dynamic>{};
+
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => OrderAlertScreen(
+            orderData: orderData,
+            onAccepted: () => loadOrders(),
+            onRejected: () => loadOrders(),
+          ),
+        ),
+      );
     });
+  }
+
+  Future<void> _init() async {
+    _myUserId = await Session.getUserId();
+    loadOrders();
+    _listenForMessages();
+  }
+
+  void _listenForMessages() {
+    SocketService.on("receive_message", (data) {
+      if (!mounted) return;
+      final orderId = data["orderId"]?.toString() ?? "";
+      if (orderId.isEmpty) return;
+      final senderRole = data["senderRole"] ?? "";
+      if (senderRole == "rider") return;
+
+      setState(() {
+        _unreadCounts[orderId] = (_unreadCounts[orderId] ?? 0) + 1;
+      });
+
+      NotificationStore.instance.add(AppNotification(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        title: "New message from customer",
+        body: data["text"] ?? "New message",
+        type: "chat",
+        receivedAt: DateTime.now(),
+      ));
+    });
+  }
+
+  void _openChat(Map order) {
+    final orderId = order["_id"].toString();
+    final customerName = order["user"]?["name"] ?? "Customer";
+    setState(() => _unreadCounts[orderId] = 0);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          orderId: orderId,
+          senderRole: "rider",
+          recipientName: customerName,
+        ),
+      ),
+    );
   }
 
   @override
   void dispose() {
     SocketService.off("new_order");
+    SocketService.off("receive_message");
     super.dispose();
   }
 
@@ -200,8 +278,15 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                                 final _addr = order["deliveryAddress"];
                                 String deliveryAddress = "";
                                 if (_addr is Map) {
-                                  final parts = [_addr['street'], _addr['state'], _addr['city']]
-                                      .where((p) => p != null && p.toString().isNotEmpty).toList();
+                                  final parts = [
+                                    _addr['street'],
+                                    _addr['state'],
+                                    _addr['city']
+                                  ]
+                                      .where((p) =>
+                                          p != null &&
+                                          p.toString().isNotEmpty)
+                                      .toList();
                                   deliveryAddress = parts.join(', ');
                                 } else if (_addr is String) {
                                   deliveryAddress = _addr;
@@ -219,7 +304,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                        // Header row
                                         Row(
                                           mainAxisAlignment:
                                               MainAxisAlignment.spaceBetween,
@@ -234,8 +318,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                                           ],
                                         ),
                                         const SizedBox(height: 8),
-
-                                        // Customer name
                                         Row(
                                           children: [
                                             const Icon(Icons.person_outline,
@@ -252,8 +334,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                                           ],
                                         ),
                                         const SizedBox(height: 4),
-
-                                        // Delivery address
                                         if (deliveryAddress
                                             .toString()
                                             .isNotEmpty)
@@ -280,7 +360,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                                             ],
                                           ),
                                         const SizedBox(height: 4),
-
                                         Text(
                                           "₦${order["total"] ?? 0}  •  ${order["items"]?.length ?? 0} item(s)",
                                           style: const TextStyle(
@@ -290,20 +369,89 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
                                         const SizedBox(height: 12),
                                         buildActionButtons(order),
                                         const SizedBox(height: 6),
-                                        Align(
-                                          alignment: Alignment.centerRight,
-                                          child: TextButton(
-                                            onPressed: () => Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (_) =>
-                                                    ActiveOrderScreen(
-                                                        order: order),
-                                              ),
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.end,
+                                          children: [
+                                            Stack(
+                                              clipBehavior: Clip.none,
+                                              children: [
+                                                IconButton(
+                                                  onPressed: () =>
+                                                      _openChat(order),
+                                                  icon: const Icon(
+                                                      Icons
+                                                          .chat_bubble_outline_rounded,
+                                                      color: Colors.teal,
+                                                      size: 20),
+                                                  tooltip: "Chat",
+                                                ),
+                                                if ((_unreadCounts[order[
+                                                            "_id"]
+                                                        ?.toString()] ??
+                                                    0) >
+                                                    0)
+                                                  Positioned(
+                                                    top: 6,
+                                                    right: 6,
+                                                    child: Container(
+                                                      width: 14,
+                                                      height: 14,
+                                                      decoration:
+                                                          const BoxDecoration(
+                                                        color: Colors.red,
+                                                        shape:
+                                                            BoxShape.circle,
+                                                      ),
+                                                      child: Center(
+                                                        child: Text(
+                                                          "${_unreadCounts[order["_id"]?.toString()] ?? 0}",
+                                                          style: const TextStyle(
+                                                              color: Colors
+                                                                  .white,
+                                                              fontSize: 8,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w700),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                              ],
                                             ),
-                                            child:
-                                                const Text("View Details"),
-                                          ),
+                                            IconButton(
+                                              onPressed: () =>
+                                                  Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) => CallScreen(
+                                                    orderId: order["_id"],
+                                                    senderRole: "rider",
+                                                    recipientName:
+                                                        customerName,
+                                                  ),
+                                                ),
+                                              ),
+                                              icon: const Icon(
+                                                  Icons.call_rounded,
+                                                  color: Colors.green,
+                                                  size: 20),
+                                              tooltip: "Call",
+                                            ),
+                                            TextButton(
+                                              onPressed: () =>
+                                                  Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      ActiveOrderScreen(
+                                                          order: order),
+                                                ),
+                                              ),
+                                              child:
+                                                  const Text("View Details"),
+                                            ),
+                                          ],
                                         ),
                                       ],
                                     ),

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../core/theme/customer_theme.dart';
+import '../../core/theme/app_theme.dart';
 import '../../services/notification_store.dart';
 import 'package:intl/intl.dart';
 
@@ -13,10 +13,11 @@ class NotificationsScreen extends StatefulWidget {
 class _NotificationsScreenState extends State<NotificationsScreen> {
   final store = NotificationStore.instance;
 
+  bool get _dark => Theme.of(context).brightness == Brightness.dark;
+
   @override
   void initState() {
     super.initState();
-    // Mark all as read when screen opens
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await store.markAllRead();
     });
@@ -24,20 +25,33 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final dark = _dark;
+    final bg = dark ? CustomerColors.backgroundDark : const Color(0xFFF7F7F7);
+    final appBarBg = dark ? const Color(0xFF1A0808) : null;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F7),
+      backgroundColor: bg,
       appBar: AppBar(
         title: const Text("Notifications"),
+        backgroundColor: appBarBg,
+        foregroundColor: dark ? Colors.white : null,
         actions: [
-          if (store.notifications.isNotEmpty)
-            TextButton(
-              onPressed: () async {
-                await store.clear();
-                setState(() {});
-              },
-              child: const Text("Clear all",
-                  style: TextStyle(color: Colors.white)),
-            ),
+          ListenableBuilder(
+            listenable: store,
+            builder: (_, __) => store.notifications.isEmpty
+                ? const SizedBox()
+                : TextButton(
+                    onPressed: () async {
+                      await store.clear();
+                      if (mounted) setState(() {});
+                    },
+                    child: Text(
+                      "Clear all",
+                      style: TextStyle(
+                          color: dark ? Colors.white70 : Colors.white),
+                    ),
+                  ),
+          ),
         ],
       ),
       body: ListenableBuilder(
@@ -51,11 +65,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.notifications_off_outlined,
-                      size: 64, color: Colors.grey.shade300),
+                      size: 64, color: Colors.grey.shade400),
                   const SizedBox(height: 16),
-                  Text("No notifications yet",
-                      style: TextStyle(
-                          fontSize: 16, color: Colors.grey.shade500)),
+                  Text(
+                    "No notifications yet",
+                    style: TextStyle(fontSize: 16, color: Colors.grey.shade500),
+                  ),
                 ],
               ),
             );
@@ -73,17 +88,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Widget _notifTile(AppNotification n) {
-    final timeStr = _formatTime(n.receivedAt);
+    final dark = _dark;
+    final readBg   = dark ? const Color(0xFF2C1010) : Colors.white;
+    final unreadBg = dark
+        ? CustomerColors.primary.withOpacity(0.12)
+        : CustomerColors.primary.withOpacity(0.06);
+    final readBorder   = dark ? Colors.grey.shade800 : Colors.grey.shade200;
+    final unreadBorder = CustomerColors.primary.withOpacity(0.3);
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: n.isRead ? Colors.white : CustomerColors.primary.withOpacity(0.06),
+        color: n.isRead ? readBg : unreadBg,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: n.isRead
-              ? Colors.grey.shade200
-              : CustomerColors.primary.withOpacity(0.3),
+          color: n.isRead ? readBorder : unreadBorder,
           width: 1.2,
         ),
       ),
@@ -106,17 +125,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: Text(n.title,
-                          style: TextStyle(
-                              fontWeight: n.isRead
-                                  ? FontWeight.w500
-                                  : FontWeight.w700,
-                              fontSize: 14)),
+                      child: Text(
+                        n.title,
+                        style: TextStyle(
+                          fontWeight: n.isRead ? FontWeight.w500 : FontWeight.w700,
+                          fontSize: 14,
+                          color: dark ? Colors.white : Colors.black,
+                        ),
+                      ),
                     ),
                     if (!n.isRead)
                       Container(
-                        width: 8,
-                        height: 8,
+                        width: 8, height: 8,
                         decoration: BoxDecoration(
                           color: CustomerColors.primary,
                           shape: BoxShape.circle,
@@ -125,13 +145,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                Text(n.body,
-                    style: TextStyle(
-                        fontSize: 13, color: Colors.grey.shade600)),
+                Text(
+                  n.body,
+                  style: TextStyle(
+                      fontSize: 13,
+                      color: dark ? Colors.grey.shade400 : Colors.grey.shade600),
+                ),
                 const SizedBox(height: 6),
-                Text(timeStr,
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.grey.shade400)),
+                Text(
+                  _formatTime(n.receivedAt),
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: dark ? Colors.grey.shade600 : Colors.grey.shade400),
+                ),
               ],
             ),
           ),
@@ -142,34 +168,25 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   IconData _iconFor(String? type) {
     switch (type) {
-      case 'new_order':
-        return Icons.receipt_long;
-      case 'order_status':
-        return Icons.local_shipping_outlined;
-      case 'rider_assigned':
-        return Icons.delivery_dining;
-      default:
-        return Icons.notifications_outlined;
+      case 'new_order': return Icons.receipt_long;
+      case 'order_status': return Icons.local_shipping_outlined;
+      case 'rider_assigned': return Icons.delivery_dining;
+      default: return Icons.notifications_outlined;
     }
   }
 
   Color _iconColor(String? type) {
     switch (type) {
-      case 'new_order':
-        return Colors.orange;
-      case 'order_status':
-        return Colors.blue;
-      case 'rider_assigned':
-        return Colors.green;
-      default:
-        return CustomerColors.primary;
+      case 'new_order': return Colors.orange;
+      case 'order_status': return Colors.blue;
+      case 'rider_assigned': return Colors.green;
+      default: return CustomerColors.primary;
     }
   }
 
   String _formatTime(DateTime dt) {
     final now = DateTime.now();
     final diff = now.difference(dt);
-
     if (diff.inMinutes < 1) return 'Just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours < 24) return '${diff.inHours}h ago';

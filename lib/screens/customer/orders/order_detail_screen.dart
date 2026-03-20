@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../../../core/theme/customer_theme.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../services/api_service.dart';
+import '../../../services/customer_wallet_service.dart';
+import '../../shared/chat_screen.dart';
+import '../../shared/call_screen.dart';
 
 class OrderDetailScreen extends StatefulWidget {
   final Map<String, dynamic> order;
@@ -12,22 +15,124 @@ class OrderDetailScreen extends StatefulWidget {
 }
 
 class _OrderDetailScreenState extends State<OrderDetailScreen> {
+  late Map<String, dynamic> _order;
   bool _hasRatedVendor = false;
   bool _hasRatedRider = false;
   bool _ratingLoading = false;
   bool _ratingChecked = false;
+  bool _cancelling = false;
+
+  bool get _dark => Theme.of(context).brightness == Brightness.dark;
 
   @override
   void initState() {
     super.initState();
-    if ((widget.order['status'] ?? '') == 'delivered') {
+    _order = Map<String, dynamic>.from(widget.order);
+    if ((_order['status'] ?? '') == 'delivered') {
       _checkExistingRatings();
     }
   }
 
+  void _openChat() {
+    final rider = _order['rider'];
+    final riderName = rider is Map
+        ? (rider['user']?['name'] ?? rider['name'] ?? 'Rider')
+        : 'Rider';
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          orderId: _order['_id'],
+          senderRole: 'customer',
+          recipientName: riderName,
+        ),
+      ),
+    );
+  }
+
+  void _openCall() {
+    final rider = _order['rider'];
+    final riderName = rider is Map
+        ? (rider['user']?['name'] ?? rider['name'] ?? 'Rider')
+        : 'Rider';
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CallScreen(
+          orderId: _order['_id'],
+          senderRole: 'customer',
+          recipientName: riderName,
+        ),
+      ),
+    );
+  }
+
+  Widget _chatCallBar() {
+    final status = _order['status'] ?? '';
+    final hasRider = _order['rider'] != null;
+    final activeStatuses = [
+      'rider_assigned', 'arrived_at_pickup',
+      'picked_up', 'on_the_way'
+    ];
+    if (!hasRider || !activeStatuses.contains(status)) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _dark ? const Color(0xFF0F2828) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: CustomerColors.primary.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.person_rounded,
+              color: CustomerColors.primary, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text("Contact your rider",
+                style: TextStyle(
+                    color: _dark ? Colors.white : Colors.black87,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13)),
+          ),
+          // Chat
+          GestureDetector(
+            onTap: _openChat,
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: CustomerColors.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.chat_bubble_outline_rounded,
+                  color: CustomerColors.primary, size: 18),
+            ),
+          ),
+          // Call
+          GestureDetector(
+            onTap: _openCall,
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.call_rounded,
+                  color: Colors.green, size: 18),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _checkExistingRatings() async {
     try {
-      final orderId = widget.order['_id'];
+      final orderId = _order['_id'];
       final res = await ApiService.get("/ratings/order/$orderId");
       if (!mounted) return;
       setState(() {
@@ -35,7 +140,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         _hasRatedRider = res['hasRatedRider'] == true;
         _ratingChecked = true;
       });
-      // Auto-show popup if not yet rated
       if (!_hasRatedVendor || !_hasRatedRider) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _showRatingDialog());
       }
@@ -44,13 +148,78 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
   }
 
+  Future<void> _confirmCancel() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _dark ? const Color(0xFF2C1010) : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          "Cancel order?",
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: _dark ? Colors.white : Colors.black,
+          ),
+        ),
+        content: Text(
+          "This order will be cancelled. If you paid online, the amount will be refunded to your wallet.",
+          style: TextStyle(fontSize: 14, color: _dark ? Colors.grey.shade300 : Colors.grey.shade700),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text("Keep order", style: TextStyle(color: Colors.grey.shade500)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Yes, cancel"),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    _doCancel();
+  }
+
+  Future<void> _doCancel() async {
+    setState(() => _cancelling = true);
+    try {
+      final res = await CustomerWalletService.cancelOrder(_order['_id']);
+      if (!mounted) return;
+      setState(() {
+        _order = Map<String, dynamic>.from(_order)..['status'] = 'cancelled';
+        _cancelling = false;
+      });
+      final refunded = res['refunded'] == true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(refunded
+              ? "Order cancelled. Refund sent to your wallet 💰"
+              : "Order cancelled successfully."),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _cancelling = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceAll("Exception: ", ""))),
+      );
+    }
+  }
+
   Future<void> _showRatingDialog() async {
-    final order = widget.order;
+    final order = _order;
     final vendor = order['vendor'];
     final rider = order['rider'];
     final hasVendor = vendor != null && !_hasRatedVendor;
     final hasRider = rider != null && !_hasRatedRider;
-
     if (!hasVendor && !hasRider) return;
 
     int vendorScore = 5;
@@ -63,32 +232,32 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => Dialog(
+          backgroundColor: _dark ? const Color(0xFF2C1010) : Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Header
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: CustomerColors.primary.withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.star_rounded,
-                      color: CustomerColors.primary, size: 32),
+                  child: const Icon(Icons.star_rounded, color: CustomerColors.primary, size: 32),
                 ),
                 const SizedBox(height: 12),
-                const Text("Rate your experience",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Text("Rate your experience",
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: _dark ? Colors.white : Colors.black)),
                 const SizedBox(height: 4),
                 Text("Your feedback helps improve the service",
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
                     textAlign: TextAlign.center),
                 const SizedBox(height: 20),
-
-                // Vendor rating
                 if (hasVendor) ...[
                   _ratingSection(
                     icon: Icons.storefront_outlined,
@@ -100,8 +269,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   ),
                   if (hasRider) const SizedBox(height: 16),
                 ],
-
-                // Rider rating
                 if (hasRider) ...[
                   _ratingSection(
                     icon: Icons.delivery_dining_outlined,
@@ -112,16 +279,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     onScoreChanged: (s) => setDialogState(() => riderScore = s),
                   ),
                 ],
-
                 const SizedBox(height: 20),
-
                 Row(
                   children: [
                     Expanded(
                       child: TextButton(
                         onPressed: () => Navigator.pop(ctx),
-                        child: Text("Skip",
-                            style: TextStyle(color: Colors.grey.shade500)),
+                        child: Text("Skip", style: TextStyle(color: Colors.grey.shade500)),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -132,8 +296,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                           backgroundColor: CustomerColors.primary,
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           elevation: 0,
                         ),
                         onPressed: _ratingLoading
@@ -147,8 +310,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                   riderComment: riderCommentCtrl.text.trim(),
                                 );
                               },
-                        child: const Text("Submit",
-                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        child: const Text("Submit", style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],
@@ -169,12 +331,17 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     required TextEditingController commentCtrl,
     required ValueChanged<int> onScoreChanged,
   }) {
+    final dark = _dark;
+    final sectionBg = dark ? const Color(0xFF3A1515) : Colors.grey.shade50;
+    final borderColor = dark ? Colors.grey.shade800 : Colors.grey.shade200;
+    final labelColor = dark ? Colors.white : Colors.black;
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.grey.shade50,
+        color: sectionBg,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: borderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -186,12 +353,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(label,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 13)),
-                  Text(sublabel,
-                      style: TextStyle(
-                          fontSize: 11, color: Colors.grey.shade500)),
+                  Text(label, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: labelColor)),
+                  Text(sublabel, style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
                 ],
               ),
             ],
@@ -218,25 +381,20 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           TextField(
             controller: commentCtrl,
             maxLines: 2,
-            style: const TextStyle(fontSize: 13),
+            style: TextStyle(fontSize: 13, color: dark ? Colors.white : Colors.black),
             decoration: InputDecoration(
               hintText: "Add a comment (optional)",
-              hintStyle:
-                  TextStyle(fontSize: 12, color: Colors.grey.shade400),
+              hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade500),
               contentPadding: const EdgeInsets.all(10),
+              filled: true,
+              fillColor: dark ? const Color(0xFF2C1010) : Colors.white,
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: Colors.grey.shade200),
-              ),
+                  borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: borderColor)),
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: Colors.grey.shade200),
-              ),
+                  borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: borderColor)),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(
-                    color: CustomerColors.primary, width: 1.5),
-              ),
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: CustomerColors.primary, width: 1.5)),
             ),
           ),
         ],
@@ -253,7 +411,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     setState(() => _ratingLoading = true);
     try {
       await ApiService.post("/ratings", {
-        "orderId": widget.order['_id'],
+        "orderId": _order['_id'],
         if (vendorScore != null) "vendorScore": vendorScore,
         if (vendorComment.isNotEmpty) "vendorComment": vendorComment,
         if (riderScore != null) "riderScore": riderScore,
@@ -266,10 +424,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         _ratingLoading = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Thanks for your feedback! ⭐"),
-          backgroundColor: Colors.green,
-        ),
+        const SnackBar(content: Text("Thanks for your feedback! ⭐"), backgroundColor: Colors.green),
       );
     } catch (e) {
       if (!mounted) return;
@@ -282,7 +437,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final order = widget.order;
+    final dark = _dark;
+    final order = _order;
     final orderId = (order['_id'] ?? '').toString();
     final shortId = orderId.length > 8
         ? orderId.substring(orderId.length - 8).toUpperCase()
@@ -291,46 +447,52 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final total = order['total'] ?? order['totalAmount'] ?? 0;
     final items = order['items'] is List ? order['items'] as List : [];
     final vendor = order['vendor'];
-    final vendorName =
-        vendor?['businessName'] ?? vendor?['name'] ?? 'Unknown';
+    final vendorName = vendor?['businessName'] ?? vendor?['name'] ?? 'Unknown';
     final vendorRating = vendor?['rating'];
     final rider = order['rider'];
     final riderRating = rider?['rating'];
-    final createdAt = order['createdAt'] != null
-        ? DateTime.tryParse(order['createdAt'])
-        : null;
-    final deliveryAddress = order['deliveryAddress'] ??
-        order['address'] ??
-        order['location']?['address'];
+    final createdAt =
+        order['createdAt'] != null ? DateTime.tryParse(order['createdAt']) : null;
+    final deliveryAddress =
+        order['deliveryAddress'] ?? order['address'] ?? order['location']?['address'];
     final paymentMethod = order['paymentMethod'] ?? order['payment'] ?? '';
     final deliveryFee = order['deliveryFee'] ?? 0;
     final isDelivered = status == 'delivered';
+    final isPending = status == 'pending';
     final isPackage = order['type'] == 'package';
 
+    final bg = dark ? CustomerColors.backgroundDark : const Color(0xFFF7F7F7);
+    final appBarBg = dark ? const Color(0xFF1A0808) : null;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F7),
-      appBar: AppBar(title: Text('Order #$shortId')),
+      backgroundColor: bg,
+      appBar: AppBar(
+        title: Text('Order #$shortId'),
+        backgroundColor: appBarBg,
+        foregroundColor: dark ? Colors.white : null,
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _statusCard(status, createdAt),
+            _statusCard(status, createdAt, dark),
             const SizedBox(height: 16),
 
-            // Vendor (food orders only)
             if (!isPackage && vendor != null) ...[
               _infoCard(
                 title: 'Kitchen',
+                dark: dark,
                 child: Row(
                   children: [
-                    const Icon(Icons.store_outlined,
-                        color: CustomerColors.primary, size: 20),
+                    const Icon(Icons.store_outlined, color: CustomerColors.primary, size: 20),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(vendorName,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w600, fontSize: 15)),
+                          style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                              color: dark ? Colors.white : Colors.black)),
                     ),
                     if (vendorRating != null && vendorRating > 0)
                       _ratingBadge(vendorRating.toDouble()),
@@ -340,21 +502,20 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               const SizedBox(height: 12),
             ],
 
-            // Rider (if assigned)
             if (rider != null) ...[
               _infoCard(
                 title: 'Rider',
+                dark: dark,
                 child: Row(
                   children: [
-                    const Icon(Icons.delivery_dining_outlined,
-                        color: CustomerColors.primary, size: 20),
+                    const Icon(Icons.delivery_dining_outlined, color: CustomerColors.primary, size: 20),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: Text(
-                        rider['user']?['name'] ?? 'Rider',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w600, fontSize: 15),
-                      ),
+                      child: Text(rider['user']?['name'] ?? 'Rider',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                              color: dark ? Colors.white : Colors.black)),
                     ),
                     if (riderRating != null && riderRating > 0)
                       _ratingBadge(riderRating.toDouble()),
@@ -364,39 +525,35 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               const SizedBox(height: 12),
             ],
 
-            // Items / Package details
             if (isPackage)
-              _packageDetailsCard(order['packageDetails'])
+              _packageDetailsCard(order['packageDetails'], dark)
             else
               _infoCard(
                 title: 'Items ordered',
+                dark: dark,
                 child: Column(
                   children: [
-                    ...items.map((item) => _itemRow(item)),
+                    ...items.map((item) => _itemRow(item, dark)),
                     const Divider(height: 20),
-                    if (deliveryFee != 0)
-                      _summaryRow('Delivery fee', '₦$deliveryFee'),
-                    _summaryRow('Total', '₦$total', bold: true),
+                    if (deliveryFee != 0) _summaryRow('Delivery fee', '₦$deliveryFee', dark: dark),
+                    _summaryRow('Total', '₦$total', bold: true, dark: dark),
                   ],
                 ),
               ),
             const SizedBox(height: 12),
 
-            // Delivery address
             if (deliveryAddress != null) ...[
               _infoCard(
                 title: 'Delivery address',
+                dark: dark,
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.location_on_outlined,
-                        color: CustomerColors.primary, size: 20),
+                    const Icon(Icons.location_on_outlined, color: CustomerColors.primary, size: 20),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: Text(
-                        _formatAddress(deliveryAddress),
-                        style: const TextStyle(fontSize: 14),
-                      ),
+                      child: Text(_formatAddress(deliveryAddress),
+                          style: TextStyle(fontSize: 14, color: dark ? Colors.white70 : Colors.black87)),
                     ),
                   ],
                 ),
@@ -404,26 +561,32 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               const SizedBox(height: 12),
             ],
 
-            // Payment
             if (paymentMethod.toString().isNotEmpty) ...[
               _infoCard(
                 title: 'Payment',
+                dark: dark,
                 child: Row(
                   children: [
-                    const Icon(Icons.payment_outlined,
-                        color: CustomerColors.primary, size: 20),
+                    const Icon(Icons.payment_outlined, color: CustomerColors.primary, size: 20),
                     const SizedBox(width: 10),
                     Text(paymentMethod.toString(),
-                        style: const TextStyle(fontSize: 14)),
+                        style: TextStyle(fontSize: 14, color: dark ? Colors.white70 : Colors.black87)),
                   ],
                 ),
               ),
               const SizedBox(height: 12),
             ],
 
-            // Rating section (delivered orders)
-            if (isDelivered && _ratingChecked)
-              _ratingStatusCard(order),
+           // ── Chat & Call bar — active orders with rider ───────────────
+            _chatCallBar(),
+
+            if (isDelivered && _ratingChecked) _ratingStatusCard(order, dark),
+
+            // ── Cancel button — pending orders only ──────────────────────
+            if (isPending) ...[
+              const SizedBox(height: 8),
+              _cancelButton(dark),
+            ],
 
             const SizedBox(height: 24),
           ],
@@ -432,20 +595,44 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
+  Widget _cancelButton(bool dark) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        icon: _cancelling
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.red),
+              )
+            : const Icon(Icons.cancel_outlined, color: Colors.red, size: 18),
+        label: Text(
+          _cancelling ? "Cancelling..." : "Cancel Order",
+          style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600),
+        ),
+        style: OutlinedButton.styleFrom(
+          side: const BorderSide(color: Colors.red, width: 1.4),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          backgroundColor: Colors.red.withOpacity(dark ? 0.08 : 0.04),
+        ),
+        onPressed: _cancelling ? null : _confirmCancel,
+      ),
+    );
+  }
+
   String _formatAddress(dynamic addr) {
     if (addr is String) return addr;
     if (addr is Map) {
-      final parts = [
-        addr['street'],
-        addr['city'],
-        addr['state'],
-      ].where((p) => p != null && p.toString().isNotEmpty).toList();
+      final parts = [addr['street'], addr['city'], addr['state']]
+          .where((p) => p != null && p.toString().isNotEmpty)
+          .toList();
       return parts.join(', ');
     }
     return addr.toString();
   }
 
-  Widget _ratingStatusCard(Map<String, dynamic> order) {
+  Widget _ratingStatusCard(Map<String, dynamic> order, bool dark) {
     final vendor = order['vendor'];
     final rider = order['rider'];
     final bothRated = _hasRatedVendor && _hasRatedRider;
@@ -456,12 +643,14 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: bothRated ? Colors.green.shade50 : Colors.amber.shade50,
+        color: bothRated
+            ? (dark ? Colors.green.shade900.withOpacity(0.4) : Colors.green.shade50)
+            : (dark ? Colors.amber.shade900.withOpacity(0.3) : Colors.amber.shade50),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: bothRated
-              ? Colors.green.shade200
-              : Colors.amber.shade200,
+              ? (dark ? Colors.green.shade700 : Colors.green.shade200)
+              : (dark ? Colors.amber.shade700 : Colors.amber.shade200),
         ),
       ),
       child: Row(
@@ -474,15 +663,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              bothRated
-                  ? "Thanks for rating this order!"
-                  : "How was your experience?",
+              bothRated ? "Thanks for rating this order!" : "How was your experience?",
               style: TextStyle(
                 fontWeight: FontWeight.w600,
                 fontSize: 13,
                 color: bothRated
-                    ? Colors.green.shade700
-                    : Colors.amber.shade800,
+                    ? (dark ? Colors.green.shade300 : Colors.green.shade700)
+                    : (dark ? Colors.amber.shade300 : Colors.amber.shade800),
               ),
             ),
           ),
@@ -490,19 +677,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             GestureDetector(
               onTap: _showRatingDialog,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                   color: CustomerColors.primary,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Text(
-                  "Rate",
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12),
-                ),
+                child: const Text("Rate",
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
               ),
             ),
         ],
@@ -523,76 +704,69 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         children: [
           const Icon(Icons.star_rounded, color: Colors.amber, size: 14),
           const SizedBox(width: 3),
-          Text(
-            rating.toStringAsFixed(1),
-            style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 12,
-                color: Colors.black87),
-          ),
+          Text(rating.toStringAsFixed(1),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.black87)),
         ],
       ),
     );
   }
 
-  Widget _packageDetailsCard(dynamic details) {
+  Widget _packageDetailsCard(dynamic details, bool dark) {
     if (details == null) return const SizedBox();
     return _infoCard(
       title: 'Package details',
+      dark: dark,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (details['description'] != null)
-            _detailRow(Icons.inventory_2_outlined, details['description']),
+            _detailRow(Icons.inventory_2_outlined, details['description'], dark),
           if (details['sizeLabel'] != null)
-            _detailRow(Icons.straighten_outlined, "Size: ${details['sizeLabel']}"),
+            _detailRow(Icons.straighten_outlined, "Size: ${details['sizeLabel']}", dark),
           if (details['weight'] != null)
-            _detailRow(Icons.monitor_weight_outlined, "Weight: ${details['weight']} kg"),
+            _detailRow(Icons.monitor_weight_outlined, "Weight: ${details['weight']} kg", dark),
           if (details['transportLabel'] != null)
-            _detailRow(Icons.local_shipping_outlined, details['transportLabel']),
+            _detailRow(Icons.local_shipping_outlined, details['transportLabel'], dark),
           if (details['recipientName'] != null)
-            _detailRow(Icons.person_outline, "Recipient: ${details['recipientName']}"),
+            _detailRow(Icons.person_outline, "Recipient: ${details['recipientName']}", dark),
           if (details['recipientPhone'] != null)
-            _detailRow(Icons.phone_outlined, details['recipientPhone']),
+            _detailRow(Icons.phone_outlined, details['recipientPhone'], dark),
         ],
       ),
     );
   }
 
-  Widget _detailRow(IconData icon, String text) {
+  Widget _detailRow(IconData icon, String text, bool dark) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
           Icon(icon, size: 16, color: Colors.grey.shade500),
           const SizedBox(width: 8),
-          Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
+          Expanded(
+              child: Text(text,
+                  style: TextStyle(fontSize: 13, color: dark ? Colors.white70 : Colors.black87))),
         ],
       ),
     );
   }
 
-  Widget _statusCard(String status, DateTime? createdAt) {
+  Widget _statusCard(String status, DateTime? createdAt, bool dark) {
     Color color;
     IconData icon;
     switch (status.toLowerCase()) {
-      case 'delivered':
-        color = Colors.green; icon = Icons.check_circle_outline; break;
-      case 'cancelled':
-        color = Colors.red; icon = Icons.cancel_outlined; break;
-      case 'refunded':
-        color = Colors.purple; icon = Icons.replay_outlined; break;
-      case 'pending':
-        color = Colors.orange; icon = Icons.hourglass_empty_outlined; break;
-      default:
-        color = Colors.blue; icon = Icons.local_shipping_outlined;
+      case 'delivered': color = Colors.green; icon = Icons.check_circle_outline; break;
+      case 'cancelled': color = Colors.red; icon = Icons.cancel_outlined; break;
+      case 'refunded': color = Colors.purple; icon = Icons.replay_outlined; break;
+      case 'pending': color = Colors.orange; icon = Icons.hourglass_empty_outlined; break;
+      default: color = Colors.blue; icon = Icons.local_shipping_outlined;
     }
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withOpacity(dark ? 0.15 : 0.08),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: color.withOpacity(0.3), width: 1.2),
       ),
@@ -605,13 +779,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             children: [
               Text(
                 status[0].toUpperCase() + status.substring(1),
-                style: TextStyle(
-                    color: color, fontWeight: FontWeight.bold, fontSize: 18),
+                style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 18),
               ),
               if (createdAt != null)
                 Text(
                   DateFormat('MMM d, yyyy • h:mm a').format(createdAt),
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  style: TextStyle(
+                      fontSize: 12, color: dark ? Colors.grey.shade400 : Colors.grey.shade600),
                 ),
             ],
           ),
@@ -620,14 +794,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
-  Widget _infoCard({required String title, required Widget child}) {
+  Widget _infoCard({required String title, required Widget child, required bool dark}) {
+    final cardColor = dark ? const Color(0xFF2C1010) : Colors.white;
+    final borderColor = dark ? Colors.grey.shade800 : Colors.grey.shade200;
+    final titleColor = dark ? Colors.grey.shade400 : Colors.grey.shade500;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cardColor,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade200, width: 1.2),
+        border: Border.all(color: borderColor, width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -635,7 +813,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           Text(title,
               style: TextStyle(
                   fontSize: 12,
-                  color: Colors.grey.shade500,
+                  color: titleColor,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.5)),
           const SizedBox(height: 10),
@@ -645,39 +823,46 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
-  Widget _itemRow(dynamic item) {
+  Widget _itemRow(dynamic item, bool dark) {
     final name = item['name'] ?? item['menuItem']?['name'] ?? 'Item';
     final qty = item['quantity'] ?? item['qty'] ?? 1;
     final price = item['price'] ?? item['unitPrice'] ?? 0;
+    final textColor = dark ? Colors.white : Colors.black;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
           Container(
-            width: 28, height: 28,
+            width: 28,
+            height: 28,
             decoration: BoxDecoration(
               color: CustomerColors.primary.withOpacity(0.1),
               borderRadius: BorderRadius.circular(6),
             ),
             child: Center(
               child: Text('$qty',
-                  style: TextStyle(
+                  style: const TextStyle(
                       color: CustomerColors.primary,
                       fontWeight: FontWeight.bold,
                       fontSize: 12)),
             ),
           ),
           const SizedBox(width: 10),
-          Expanded(child: Text(name, style: const TextStyle(fontSize: 14))),
+          Expanded(child: Text(name, style: TextStyle(fontSize: 14, color: textColor))),
           Text('₦$price',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: textColor)),
         ],
       ),
     );
   }
 
-  Widget _summaryRow(String label, String value, {bool bold = false}) {
+  Widget _summaryRow(String label, String value, {bool bold = false, required bool dark}) {
+    final labelColor = bold
+        ? (dark ? Colors.white : Colors.black)
+        : (dark ? Colors.grey.shade400 : Colors.grey.shade600);
+    final valueColor = bold ? CustomerColors.primary : (dark ? Colors.white70 : Colors.black);
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
@@ -686,13 +871,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           Text(label,
               style: TextStyle(
                   fontSize: 13,
-                  color: bold ? Colors.black : Colors.grey.shade600,
+                  color: labelColor,
                   fontWeight: bold ? FontWeight.bold : FontWeight.normal)),
           Text(value,
               style: TextStyle(
                   fontSize: 13,
                   fontWeight: bold ? FontWeight.bold : FontWeight.w500,
-                  color: bold ? CustomerColors.primary : Colors.black)),
+                  color: valueColor)),
         ],
       ),
     );

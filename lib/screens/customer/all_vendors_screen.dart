@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
+import 'package:geolocator/geolocator.dart';
 import '../../models/vendor_model.dart';
 import '../../utils/session.dart';
 import 'vendor_details_screen.dart';
-import '../../core/theme/customer_theme.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/cart/cart_provider.dart';
 
 class AllVendorsScreen extends StatefulWidget {
   final List<Vendor> vendors;
-
   const AllVendorsScreen({super.key, required this.vendors});
 
   @override
@@ -25,20 +25,44 @@ class _AllVendorsScreenState extends State<AllVendorsScreen> {
   }
 
   Future<void> _calculateDistances() async {
+    double? userLat;
+    double? userLng;
+
+    // 1. Try live GPS first (same as home screen)
     try {
-      final loc = await Session.getLocation();
-      if (loc == null) return;
-      final userLat = loc['lat'];
-      final userLng = loc['lng'];
-      if (userLat == null || userLng == null) return;
-      final cache = <String, double>{};
-      for (final v in widget.vendors) {
-        if (v.lat != null && v.lng != null) {
-          cache[v.id] = _haversine(userLat, userLng, v.lat!, v.lng!);
-        }
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
       }
-      if (mounted) setState(() => _distanceCache = cache);
+      if (permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always) {
+        final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium,
+          timeLimit: const Duration(seconds: 8),
+        );
+        userLat = pos.latitude;
+        userLng = pos.longitude;
+        // Save for future use
+        await Session.saveLocation(userLat, userLng);
+      }
     } catch (_) {}
+
+    // 2. Fall back to saved location if GPS failed
+    if (userLat == null || userLng == null) {
+      final saved = await Session.getLocation();
+      userLat = saved?['lat'];
+      userLng = saved?['lng'];
+    }
+
+    if (userLat == null || userLng == null) return;
+
+    final cache = <String, double>{};
+    for (final v in widget.vendors) {
+      if (v.lat != null && v.lng != null) {
+        cache[v.id] = _haversine(userLat, userLng, v.lat!, v.lng!);
+      }
+    }
+    if (mounted) setState(() => _distanceCache = cache);
   }
 
   double _haversine(double lat1, double lng1, double lat2, double lng2) {
@@ -68,7 +92,8 @@ class _AllVendorsScreenState extends State<AllVendorsScreen> {
               padding: const EdgeInsets.all(16),
               itemCount: widget.vendors.length,
               separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (_, i) => _vendorRow(context, widget.vendors[i]),
+              itemBuilder: (_, i) =>
+                  _vendorRow(context, widget.vendors[i]),
             ),
     );
   }
@@ -82,20 +107,19 @@ class _AllVendorsScreenState extends State<AllVendorsScreen> {
       onTap: () {
         if (!vendor.isOpen) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Vendor is currently closed")),
+            const SnackBar(
+                content: Text("This kitchen is currently closed")),
           );
           return;
         }
+        final cart = CartProvider.of(context);
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (ctx) {
-              final cart = CartProvider.of(context);
-              return CartProvider(
-                controller: cart,
-                child: VendorDetailsScreen(vendor: vendor),
-              );
-            },
+            builder: (_) => CartProvider(
+              controller: cart,
+              child: VendorDetailsScreen(vendor: vendor),
+            ),
           ),
         );
       },
@@ -141,7 +165,6 @@ class _AllVendorsScreenState extends State<AllVendorsScreen> {
                   const SizedBox(height: 5),
                   Row(
                     children: [
-                      // Open/closed
                       Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 2),
@@ -162,7 +185,6 @@ class _AllVendorsScreenState extends State<AllVendorsScreen> {
                           ),
                         ),
                       ),
-                      // Rating
                       if (rating > 0) ...[
                         const SizedBox(width: 8),
                         const Icon(Icons.star_rounded,
@@ -178,22 +200,24 @@ class _AllVendorsScreenState extends State<AllVendorsScreen> {
                       ],
                     ],
                   ),
-                  // Distance
-                  if (distance != null) ...[
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(Icons.location_on_outlined,
-                            size: 12, color: Colors.grey.shade400),
-                        const SizedBox(width: 3),
-                        Text(
-                          _formatDistance(distance),
-                          style: TextStyle(
-                              fontSize: 11, color: Colors.grey.shade500),
-                        ),
-                      ],
-                    ),
-                  ],
+                  // Distance — shows "Locating..." until GPS resolves
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(Icons.location_on_outlined,
+                          size: 12, color: Colors.grey.shade400),
+                      const SizedBox(width: 3),
+                      Text(
+                        distance != null
+                            ? _formatDistance(distance)
+                            : (vendor.lat != null
+                                ? "Locating..."
+                                : "Distance unavailable"),
+                        style: TextStyle(
+                            fontSize: 11, color: Colors.grey.shade500),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../core/theme/app_theme.dart';
+import '../../widgets/dark_mode_toggle.dart';
 import '../../utils/session.dart';
 import '../../services/api_service.dart';
 import '../../services/socket_service.dart';
@@ -8,15 +10,11 @@ import 'rider_bank_screen.dart';
 import '../rider/vehicle_info_screen.dart';
 import 'dart:io';
 
-const _kDark    = Color(0xFFFFF8F2);
-const _kCard    = Color(0xFFFFFFFF);
-const _kCardAlt = Color(0xFFFFF0E6);
-const _kOnline  = Color(0xFF00D97E);
-const _kAmber   = Color(0xFFFFC542);
-const _kText    = Color(0xFF1A1A1A);
-const _kMuted   = Color(0xFF888888);
-const _kBlue    = Color(0xFF4A90E2);
-const _kPurple  = Color(0xFFB06EFF);
+// Fixed accent colors
+const _kOnline = Color(0xFF00D97E);
+const _kAmber  = Color(0xFFFFC542);
+const _kBlue   = Color(0xFF4A90E2);
+const _kPurple = Color(0xFFB06EFF);
 
 class RiderProfileScreen extends StatefulWidget {
   final VoidCallback? onRoleSwitch;
@@ -60,22 +58,20 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
         Session.getUser(),
         Session.getUserName(),
       ]);
-
-      final res = results[0] as Map?;
+      final res  = results[0] as Map?;
       final user = results[1] as Map?;
       final name = results[2] as String?;
-
       if (mounted) {
         setState(() {
           final rider = res?["rider"];
-          imageUrl = rider?["profileImage"]?["url"];
-          riderRating = (rider?["rating"] ?? 0).toDouble();
+          imageUrl        = rider?["profileImage"]?["url"];
+          riderRating     = (rider?["rating"] ?? 0).toDouble();
           riderRatingCount = (rider?["ratingCount"] ?? 0) as int;
-          riderName = name ?? user?["name"] ?? "Rider";
-          riderEmail = user?["email"] ?? "";
-          activeRole = user?["role"] ?? "rider";
-          userRoles = List<String>.from(user?["roles"] ?? ["rider"]);
-          loading = false;
+          riderName       = name ?? user?["name"] ?? "Rider";
+          riderEmail      = user?["email"] ?? "";
+          activeRole      = user?["role"] ?? "rider";
+          userRoles       = List<String>.from(user?["roles"] ?? ["rider"]);
+          loading         = false;
         });
       }
     } catch (_) {
@@ -85,22 +81,17 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
 
   Future<void> _pickAndUploadImage() async {
     final XFile? file = await _picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 80,
-    );
+        source: ImageSource.gallery, imageQuality: 80);
     if (file == null) return;
     setState(() => isUploading = true);
     try {
       final uploadResult = await ApiService.uploadFile(
-        "/upload",
-        File(file.path),
-        {"folder": "riders"},
-      );
+          "/upload", File(file.path), {"folder": "riders"});
       if (uploadResult == null || uploadResult["url"] == null) {
         _showError("Upload failed — no URL returned");
         return;
       }
-      final url = uploadResult["url"] as String;
+      final url      = uploadResult["url"] as String;
       final publicId = uploadResult["publicId"] as String;
       await ApiService.patch("/riders/profile-image", {
         "imageUrl": url,
@@ -128,14 +119,16 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
       widget.onRoleSwitch?.call();
     } catch (e) {
       final msg = e.toString().replaceAll("Exception: ", "");
-      if (msg.contains("Vehicle info required") || msg.contains("requiresVehicleInfo")) {
+      if (msg.contains("Vehicle info required") ||
+          msg.contains("requiresVehicleInfo")) {
         if (!mounted) return;
         await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => VehicleInfoScreen(
               onCompleted: () async {
-                final res = await ApiService.post("/auth/switch-role", {"role": "rider"});
+                final res = await ApiService.post(
+                    "/auth/switch-role", {"role": "rider"});
                 await Session.saveToken(res["token"]);
                 await Session.saveUser(res["user"]);
                 widget.onRoleSwitch?.call();
@@ -168,35 +161,62 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
   void _showSuccess(String msg) => ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), backgroundColor: Colors.green));
 
+  // ── Theme helpers ────────────────────────────────────────────────
+  bool _dark(BuildContext ctx) =>
+      Theme.of(ctx).brightness == Brightness.dark;
+
+  Color _bg(BuildContext ctx)      => _dark(ctx) ? RiderColors.backgroundDark : RiderColors.background;
+  Color _card(BuildContext ctx)    => _dark(ctx) ? RiderColors.surfaceDark    : RiderColors.surface;
+  Color _cardAlt(BuildContext ctx) => _dark(ctx) ? RiderColors.surfaceAltDark : RiderColors.surfaceAlt;
+  Color _text(BuildContext ctx)    => _dark(ctx) ? RiderColors.textDark       : RiderColors.text;
+  Color _muted(BuildContext ctx)   => _dark(ctx) ? RiderColors.mutedDark      : RiderColors.muted;
+  Color _border(BuildContext ctx)  => _dark(ctx)
+      ? Colors.orange.withOpacity(0.1)
+      : Colors.orange.withOpacity(0.12);
+
   @override
   Widget build(BuildContext context) {
+    final dark = _dark(context);
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.dark,
+      value: dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
       child: Scaffold(
-        backgroundColor: const Color(0xFFFFF8F2),
+        backgroundColor: _bg(context),
         body: loading
-            ? const Center(child: CircularProgressIndicator(color: _kOnline))
+            ? Center(
+                child: CircularProgressIndicator(
+                    color: _kOnline))
             : CustomScrollView(
                 slivers: [
-                  _buildHeader(),
+                  _buildHeader(context),
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _sectionLabel("ACCOUNT"),
+                          // ── Appearance ──────────────────────────────
+                          _sectionLabel("APPEARANCE", context),
+                          const SizedBox(height: 12),
+                          const DarkModeToggle(),
+                          const SizedBox(height: 28),
+
+                          // ── Account ──────────────────────────────────
+                          _sectionLabel("ACCOUNT", context),
                           const SizedBox(height: 12),
                           _menuTile(
+                            context: context,
                             icon: Icons.account_balance_rounded,
                             title: "Bank Details",
                             subtitle: "Withdrawal account",
                             accent: _kBlue,
                             onTap: () => Navigator.push(context,
-                                MaterialPageRoute(builder: (_) => const RiderBankScreen())),
+                                MaterialPageRoute(
+                                    builder: (_) => const RiderBankScreen())),
                           ),
                           const SizedBox(height: 10),
                           _menuTile(
+                            context: context,
                             icon: Icons.two_wheeler_rounded,
                             title: "Vehicle Info",
                             subtitle: "Update your vehicle details",
@@ -204,17 +224,23 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                             onTap: () => Navigator.push(context,
                                 MaterialPageRoute(
                                     builder: (_) => VehicleInfoScreen(
-                                          onCompleted: () => Navigator.pop(context),
+                                          onCompleted: () =>
+                                              Navigator.pop(context),
                                         ))),
                           ),
                           const SizedBox(height: 28),
-                          _sectionLabel("SWITCH ROLE"),
+
+                          // ── Switch Role ───────────────────────────────
+                          _sectionLabel("SWITCH ROLE", context),
                           const SizedBox(height: 12),
-                          ..._buildRoleTiles(),
+                          ..._buildRoleTiles(context),
                           const SizedBox(height: 28),
-                          _sectionLabel("DANGER ZONE"),
+
+                          // ── Danger Zone ───────────────────────────────
+                          _sectionLabel("DANGER ZONE", context),
                           const SizedBox(height: 12),
                           _menuTile(
+                            context: context,
                             icon: Icons.logout_rounded,
                             title: "Logout",
                             subtitle: "Sign out of your account",
@@ -231,20 +257,18 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
     );
   }
 
-  // ── HEADER ────────────────────────────────────────────────────────────
-  Widget _buildHeader() {
+  Widget _buildHeader(BuildContext context) {
     return SliverToBoxAdapter(
       child: SafeArea(
         child: Column(
           children: [
-            // Back button row
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
               child: Row(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                        color: const Color(0xFF1A1A1A), size: 20),
+                    icon: Icon(Icons.arrow_back_ios_new_rounded,
+                        color: _text(context), size: 20),
                     onPressed: () => Navigator.pop(context),
                   ),
                   const Spacer(),
@@ -259,8 +283,7 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                 alignment: Alignment.bottomRight,
                 children: [
                   Container(
-                    width: 90,
-                    height: 90,
+                    width: 90, height: 90,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(color: _kOnline, width: 2.5),
@@ -269,8 +292,9 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                       child: imageUrl != null
                           ? Image.network(imageUrl!,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => _avatarPlaceholder())
-                          : _avatarPlaceholder(),
+                              errorBuilder: (_, __, ___) =>
+                                  _avatarPlaceholder(context))
+                          : _avatarPlaceholder(context),
                     ),
                   ),
                   if (isUploading)
@@ -294,7 +318,7 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                       decoration: BoxDecoration(
                         color: _kOnline,
                         shape: BoxShape.circle,
-                        border: Border.all(color: _kDark, width: 2),
+                        border: Border.all(color: _bg(context), width: 2),
                       ),
                       child: const Icon(Icons.camera_alt_rounded,
                           color: Colors.white, size: 13),
@@ -304,24 +328,22 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
             ),
 
             const SizedBox(height: 14),
-
-            // Name
             Text(riderName,
-                style: const TextStyle(
-                    color: _kText,
+                style: TextStyle(
+                    color: _text(context),
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
                     letterSpacing: -0.4)),
             const SizedBox(height: 4),
             Text(riderEmail,
-                style: const TextStyle(color: _kMuted, fontSize: 13)),
-
+                style: TextStyle(color: _muted(context), fontSize: 13)),
             const SizedBox(height: 12),
 
             // Rating pill
             if (riderRating > 0)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 decoration: BoxDecoration(
                   color: _kAmber.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(20),
@@ -332,31 +354,33 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                   children: [
                     const Icon(Icons.star_rounded, color: _kAmber, size: 16),
                     const SizedBox(width: 5),
-                    Text(
-                      riderRating.toStringAsFixed(1),
-                      style: const TextStyle(
-                          color: _kAmber,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700),
-                    ),
+                    Text(riderRating.toStringAsFixed(1),
+                        style: const TextStyle(
+                            color: _kAmber,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700)),
                     const SizedBox(width: 5),
                     Text(
                       "· $riderRatingCount ${riderRatingCount == 1 ? 'rating' : 'ratings'}",
-                      style: const TextStyle(color: _kMuted, fontSize: 12),
+                      style: TextStyle(
+                          color: _muted(context), fontSize: 12),
                     ),
                   ],
                 ),
               )
             else
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 decoration: BoxDecoration(
-                  color: _kCard,
+                  color: _card(context),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.white.withOpacity(0.08)),
+                  border: Border.all(
+                      color: Colors.white.withOpacity(0.08)),
                 ),
-                child: const Text("No ratings yet",
-                    style: TextStyle(color: _kMuted, fontSize: 12)),
+                child: Text("No ratings yet",
+                    style:
+                        TextStyle(color: _muted(context), fontSize: 12)),
               ),
 
             const SizedBox(height: 28),
@@ -366,42 +390,41 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
     );
   }
 
-  // ── ROLE TILES ────────────────────────────────────────────────────────
-  List<Widget> _buildRoleTiles() {
+  List<Widget> _buildRoleTiles(BuildContext context) {
     final allRoles = ["customer", "rider", "vendor"];
     final roleIcons = {
       "customer": Icons.person_rounded,
-      "rider": Icons.delivery_dining_rounded,
-      "vendor": Icons.storefront_rounded,
+      "rider":    Icons.delivery_dining_rounded,
+      "vendor":   Icons.storefront_rounded,
     };
     final roleColors = {
       "customer": _kBlue,
-      "rider": _kOnline,
-      "vendor": _kAmber,
+      "rider":    _kOnline,
+      "vendor":   _kAmber,
     };
 
     final tiles = <Widget>[];
     for (int i = 0; i < allRoles.length; i++) {
-      final role = allRoles[i];
+      final role     = allRoles[i];
       final isActive = role == activeRole;
-      final hasRole = userRoles.contains(role);
-      final accent = roleColors[role]!;
+      final hasRole  = userRoles.contains(role);
+      final accent   = roleColors[role]!;
 
       tiles.add(
         GestureDetector(
           onTap: (isActive || switching) ? null : () => _switchRole(role),
           child: AnimatedOpacity(
             duration: const Duration(milliseconds: 200),
-            opacity: isActive ? 1.0 : 0.7,
+            opacity: isActive ? 1.0 : 0.75,
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: isActive ? accent.withOpacity(0.12) : _kCard,
+                color: isActive ? accent.withOpacity(0.12) : _card(context),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
                   color: isActive
                       ? accent.withOpacity(0.4)
-                      : Colors.orange.withOpacity(0.12),
+                      : _border(context),
                 ),
               ),
               child: Row(
@@ -422,7 +445,7 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                         Text(
                           role[0].toUpperCase() + role.substring(1),
                           style: TextStyle(
-                            color: isActive ? accent : _kText,
+                            color: isActive ? accent : _text(context),
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
                           ),
@@ -434,8 +457,8 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                               : hasRole
                                   ? "Tap to switch"
                                   : "Tap to add this role",
-                          style: const TextStyle(
-                              color: _kMuted, fontSize: 11),
+                          style: TextStyle(
+                              color: _muted(context), fontSize: 11),
                         ),
                       ],
                     ),
@@ -455,17 +478,17 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                               fontWeight: FontWeight.w600)),
                     )
                   else if (switching)
-                    const SizedBox(
+                    SizedBox(
                       width: 16, height: 16,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: _kMuted),
+                          strokeWidth: 2, color: _muted(context)),
                     )
                   else
                     Icon(
                       hasRole
                           ? Icons.swap_horiz_rounded
                           : Icons.add_circle_outline_rounded,
-                      color: _kMuted,
+                      color: _muted(context),
                       size: 18,
                     ),
                 ],
@@ -479,22 +502,23 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
     return tiles;
   }
 
-  Widget _avatarPlaceholder() => Container(
-        color: const Color(0xFFFFF0E6),
-        child: const Icon(Icons.person_outline, color: _kMuted, size: 36),
+  Widget _avatarPlaceholder(BuildContext context) => Container(
+        color: _cardAlt(context),
+        child: Icon(Icons.person_outline, color: _muted(context), size: 36),
       );
 
-  Widget _sectionLabel(String text) => Padding(
+  Widget _sectionLabel(String text, BuildContext context) => Padding(
         padding: const EdgeInsets.only(bottom: 0),
         child: Text(text,
-            style: const TextStyle(
-                color: _kMuted,
+            style: TextStyle(
+                color: _muted(context),
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 1.4)),
       );
 
   Widget _menuTile({
+    required BuildContext context,
     required IconData icon,
     required String title,
     required String subtitle,
@@ -506,9 +530,9 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: _kCard,
+          color: _card(context),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.orange.withOpacity(0.12)),
+          border: Border.all(color: _border(context)),
         ),
         child: Row(
           children: [
@@ -526,14 +550,14 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
-                      style: const TextStyle(
-                          color: _kText,
+                      style: TextStyle(
+                          color: _text(context),
                           fontSize: 14,
                           fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
                   Text(subtitle,
-                      style: const TextStyle(
-                          color: _kMuted, fontSize: 12)),
+                      style: TextStyle(
+                          color: _muted(context), fontSize: 12)),
                 ],
               ),
             ),
@@ -542,7 +566,7 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
               size: 13,
               color: accent == Colors.redAccent
                   ? Colors.redAccent.withOpacity(0.5)
-                  : _kMuted,
+                  : _muted(context),
             ),
           ],
         ),
