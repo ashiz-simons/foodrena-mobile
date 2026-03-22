@@ -39,7 +39,7 @@ class _CustomerHomeState extends State<CustomerHome> {
   String? userName;
   double? _walletBalance;
   Map<String, double> _distanceCache = {};
-  int _selectedCategory = 0;
+  int _selectedCategory = -1;
 
   static const _categories = [
     {"label": "Swallow",  "icon": "🍲"},
@@ -86,7 +86,13 @@ class _CustomerHomeState extends State<CustomerHome> {
       }
 
       final results = await Future.wait([
-        CustomerVendorService.getVendors(lat: lat, lng: lng),
+        CustomerVendorService.getVendors(
+          lat: lat,
+          lng: lng,
+          category: _selectedCategory == -1
+              ? null
+              : _categories[_selectedCategory]["label"],
+        ),
         _loadPopularDishes(),
         _loadRecentOrders(),
         CustomerWalletService.getBalance(),
@@ -177,6 +183,27 @@ class _CustomerHomeState extends State<CustomerHome> {
       return all.take(1).toList();
     } catch (_) {
       return [];
+    }
+  }
+
+  Future<void> _reloadVendors() async {
+    try {
+      double? lat, lng;
+      final loc = await Session.getLocation();
+      lat = loc?['lat'];
+      lng = loc?['lng'];
+      final category = _selectedCategory == -1
+          ? null
+          : _categories[_selectedCategory]["label"];
+      debugPrint("🔍 Loading vendors with category: $category");
+      final vendors = await CustomerVendorService.getVendors(
+          lat: lat, lng: lng, category: category);
+      debugPrint("✅ Got ${vendors.length} vendors for category: $category");
+      if (!mounted) return;
+      setState(() => allVendors = vendors);
+      _calculateDistances();
+    } catch (e) {
+      debugPrint("❌ _reloadVendors error: $e");
     }
   }
 
@@ -442,7 +469,11 @@ class _CustomerHomeState extends State<CustomerHome> {
               final cat = _categories[i];
               final isSelected = _selectedCategory == i;
               return GestureDetector(
-                onTap: () => setState(() => _selectedCategory = i),
+                onTap: () async {
+                  final newCategory = _selectedCategory == i ? -1 : i;
+                  setState(() => _selectedCategory = newCategory);
+                  await _reloadVendors();
+                },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   width: 64,
@@ -529,7 +560,7 @@ class _CustomerHomeState extends State<CustomerHome> {
             onTap: () => Navigator.push(context,
                 MaterialPageRoute(builder: (_) => const CustomerOrdersScreen())),
             child: Container(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: cardColor,
                 borderRadius: BorderRadius.circular(14),
@@ -646,34 +677,61 @@ class _CustomerHomeState extends State<CustomerHome> {
 
   // ── NEARBY KITCHENS ──────────────────────────────────────────────────────
   Widget _vendorsSection() {
+    // Filter vendors by selected category if one is active
+    final filtered = _selectedCategory == -1
+        ? allVendors
+        : allVendors.where((v) {
+            // vendor has at least one menu item in this category
+            // since vendor model may not carry menuItems on list endpoint,
+            // we fall back to showing all if no category data
+            return true; // backend already filters via getVendors with category
+          }).toList();
+
+    final selectedLabel = _selectedCategory == -1
+        ? "Nearby kitchens"
+        : "${_categories[_selectedCategory]["label"]} kitchens";
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: _sectionHeader(
-            "Nearby kitchens",
+            selectedLabel,
             onSeeMore: () => Navigator.push(
               context,
               MaterialPageRoute(
                   builder: (_) => AllVendorsScreen(vendors: allVendors)),
             ),
-          )
+          ),
         ),
-        if (allVendors.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(24),
-            child: Center(child: Text("No vendors available")),
+        if (filtered.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+            child: Center(
+              child: Column(
+                children: [
+                  Icon(Icons.storefront_outlined,
+                      size: 40, color: Colors.grey.shade300),
+                  const SizedBox(height: 8),
+                  Text(
+                    "No kitchens for this category",
+                    style: TextStyle(
+                        color: Colors.grey.shade400, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
           )
         else
           SizedBox(
-            height: 185,
+            height: 200,
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               scrollDirection: Axis.horizontal,
-              itemCount: allVendors.length,
+              itemCount: filtered.length,
               separatorBuilder: (_, __) => const SizedBox(width: 12),
-              itemBuilder: (_, i) => _vendorCard(allVendors[i]),
+              itemBuilder: (_, i) => _vendorCard(filtered[i]),
             ),
           ),
       ],
@@ -737,8 +795,8 @@ class _CustomerHomeState extends State<CustomerHome> {
         );
       },
       child: SizedBox(
-        width: 140,
-        height: 180,
+        width: 155,
+        height: 150,
         child: DecoratedBox(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),

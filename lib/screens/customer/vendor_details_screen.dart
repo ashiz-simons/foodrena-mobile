@@ -193,6 +193,7 @@ class _VendorDetailsScreenState extends State<VendorDetailsScreen> {
           vendorId: widget.vendor.id,
           vendorName: widget.vendor.businessName,
           vendorLogoUrl: widget.vendor.logoUrl,
+          addOns: item.addOns,
         );
         Navigator.push(
           context,

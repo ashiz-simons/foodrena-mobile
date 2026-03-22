@@ -28,8 +28,6 @@ class App extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       themeMode: themeProvider.mode,
-      // Each role sets its own theme in its root widget,
-      // but we provide a sensible global fallback here.
       theme: customerLightTheme,
       darkTheme: customerDarkTheme,
       home: const SplashScreen(),

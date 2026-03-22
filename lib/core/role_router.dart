@@ -4,7 +4,9 @@ import '../core/navigation/customer_nav_shell.dart';
 import '../screens/rider/rider_home.dart';
 import '../screens/vendor/vendor_home.dart';
 import '../screens/vendor/vendor_onboarding_screen.dart';
+import '../screens/shared/incoming_call_screen.dart';
 import '../services/api_service.dart';
+import '../services/socket_service.dart';
 
 class RoleRouter extends StatefulWidget {
   final VoidCallback onLogout;
@@ -20,12 +22,71 @@ class RoleRouter extends StatefulWidget {
 
 class _RoleRouterState extends State<RoleRouter> {
   Widget? home;
-  String? _currentRole; // track role so key changes force full rebuild
+  String? _currentRole;
 
   @override
   void initState() {
     super.initState();
     _resolveHome();
+    _listenForCalls();
+  }
+
+  @override
+  void dispose() {
+    SocketService.off("call_invite", handlerId: "role_router_global");
+    super.dispose();
+  }
+
+  void _listenForCalls() {
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      SocketService.on(
+        "call_invite",
+        (data) {
+          if (!mounted) return;
+          final callOrderId  = data["orderId"]?.toString() ?? "";
+          final callerName   = data["callerName"] ?? "Unknown";
+          final channelName  = data["channelName"] ?? callOrderId;
+          final appId        = data["appId"] ?? "e03b6ecb7bcf4e279d314411ec817e7e";
+          final token        = data["token"];
+          final senderRole   = data["senderRole"] ?? "customer";
+          final recipientRole = senderRole == "rider" ? "customer" : "rider";
+
+          _showIncomingCall(
+            orderId:     callOrderId,
+            callerName:  callerName,
+            senderRole:  recipientRole,
+            channelName: channelName,
+            appId:       appId,
+            token:       token,
+          );
+        },
+        handlerId: "role_router_global",
+      );
+    });
+  }
+
+  void _showIncomingCall({
+    required String orderId,
+    required String callerName,
+    required String senderRole,
+    required String channelName,
+    required String appId,
+    String? token,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => IncomingCallScreen(
+          orderId:     orderId,
+          callerName:  callerName,
+          senderRole:  senderRole,
+          channelName: channelName,
+          appId:       appId,
+          token:       token,
+        ),
+      ),
+    );
   }
 
   Future<void> _resolveHome() async {
@@ -34,7 +95,6 @@ class _RoleRouterState extends State<RoleRouter> {
     final user = await Session.getUser();
     final role = user?["role"] as String? ?? "customer";
 
-    // Role changed — clear any stale navigation stack first
     if (_currentRole != null && _currentRole != role && mounted) {
       Navigator.of(context).popUntil((route) => route.isFirst);
     }
@@ -45,7 +105,7 @@ class _RoleRouterState extends State<RoleRouter> {
     switch (role) {
       case "rider":
         resolved = RiderHome(
-          key: const ValueKey("riderHome"), // force fresh init on rebuild
+          key: const ValueKey("riderHome"),
           onLogout: _handleLogout,
           onRoleSwitch: _resolveHome,
         );
@@ -62,14 +122,11 @@ class _RoleRouterState extends State<RoleRouter> {
           } else {
             resolved = VendorOnboardingScreen(
               key: const ValueKey("vendorOnboarding"),
-              // onCompleted: when vendor leaves without finishing,
-              // switch them back to customer so they aren't stuck.
               onCompleted: _resolveHome,
               onLeave: _switchBackToCustomer,
             );
           }
         } catch (_) {
-          // Vendor profile fetch failed — fall back to customer
           await _switchBackToCustomer();
           return;
         }

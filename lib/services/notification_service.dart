@@ -142,6 +142,37 @@ class NotificationService {
     );
   }
 
+  /// Call this from socket listeners to show a local chat notification
+  static Future<void> showChatNotification({
+    required String title,
+    required String body,
+    String? orderId,
+  }) async {
+    await _localNotifications.show(
+      DateTime.now().millisecondsSinceEpoch % 100000,
+      title,
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channel.id,
+          _channel.name,
+          channelDescription: _channel.description,
+          importance: Importance.max,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+        ),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+      ),
+      payload: orderId != null
+          ? jsonEncode({"type": "chat", "orderId": orderId})
+          : null,
+    );
+  }
+
   static void _handleNotificationTap(String? payload, BuildContext context) {
     if (payload == null) return;
     try {

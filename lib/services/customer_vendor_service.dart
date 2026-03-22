@@ -6,11 +6,20 @@ class CustomerVendorService {
   /// =======================
   /// GET ALL VENDORS
   /// =======================
-  static Future<List<Vendor>> getVendors({double? lat, double? lng}) async {
+  static Future<List<Vendor>> getVendors({
+    double? lat,
+    double? lng,
+    String? category,
+  }) async {
     String path = "/vendors";
+    final params = <String>[];
     if (lat != null && lng != null) {
-      path += "?lat=$lat&lng=$lng";
+      params.add("lat=$lat&lng=$lng");
     }
+    if (category != null) {
+      params.add("category=${Uri.encodeComponent(category)}");
+    }
+    if (params.isNotEmpty) path += "?${params.join('&')}";
     final res = await ApiService.get(path);
 
     if (res is! List) return [];

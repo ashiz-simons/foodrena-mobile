@@ -14,7 +14,6 @@ import '../../widgets/notification_bell.dart';
 import 'rider_orders_screen.dart';
 import 'rider_wallet_screen.dart';
 import 'rider_profile_screen.dart';
-import 'available_orders_screen.dart';
 import 'order_alert_screen.dart';
 import '../../services/order_alert_service.dart';
 import '../shared/identity_verification_screen.dart'; 
@@ -298,17 +297,6 @@ class _RiderHomeState extends State<RiderHome>
                       const SizedBox(height: 28),
                       _sectionLabel("QUICK ACTIONS", context),
                       const SizedBox(height: 14),
-                      _actionCard(
-                        context: context,
-                        icon: Icons.flash_on_rounded,
-                        title: "Available Orders",
-                        subtitle: "Pick from orders near you",
-                        accent: _kOnline,
-                        onTap: () => Navigator.push(context,
-                            MaterialPageRoute(
-                                builder: (_) => const AvailableOrdersScreen())),
-                      ),
-                      const SizedBox(height: 12),
                       _actionCard(
                         context: context,
                         icon: Icons.delivery_dining_rounded,

@@ -4,8 +4,18 @@ import '../../models/menu_item_model.dart';
 class CartEntry {
   final MenuItem item;
   int quantity;
+  final List<AddOn> selectedAddOns;
 
-  CartEntry({required this.item, this.quantity = 1});
+  CartEntry({
+    required this.item,
+    this.quantity = 1,
+    this.selectedAddOns = const [],
+  });
+
+  double get addOnsTotal =>
+      selectedAddOns.fold(0, (sum, a) => sum + a.price);
+
+  double get lineTotal => (item.price + addOnsTotal) * quantity;
 }
 
 class CartController extends ChangeNotifier {
@@ -17,28 +27,36 @@ class CartController extends ChangeNotifier {
 
   bool get isEmpty => _items.isEmpty;
 
-  double get total {
-    return _items.fold(0, (sum, e) => sum + (e.item.price * e.quantity));
-  }
+  double get total =>
+      _items.fold(0, (sum, e) => sum + e.lineTotal);
 
-  void add(MenuItem item, String vendorId) {
+  void add(MenuItem item, String vendorId,
+      {List<AddOn> selectedAddOns = const []}) {
     if (_vendorId != null && _vendorId != vendorId) {
       _items.clear();
     }
     _vendorId = vendorId;
 
-    final index = _items.indexWhere((e) => e.item.id == item.id);
-    if (index >= 0) {
-      _items[index].quantity++;
-    } else {
-      _items.add(CartEntry(item: item));
+    // If no add-ons, merge with existing entry of same item
+    if (selectedAddOns.isEmpty) {
+      final index =
+          _items.indexWhere((e) => e.item.id == item.id && e.selectedAddOns.isEmpty);
+      if (index >= 0) {
+        _items[index].quantity++;
+        notifyListeners();
+        return;
+      }
     }
+
+    // Add-ons present or no existing entry — always new line
+    _items.add(CartEntry(
+        item: item, selectedAddOns: selectedAddOns));
     notifyListeners();
   }
 
-  // Decrease quantity by 1, remove if it hits 0
   void remove(String itemId) {
-    final index = _items.indexWhere((e) => e.item.id == itemId);
+    final index =
+        _items.indexWhere((e) => e.item.id == itemId);
     if (index < 0) return;
 
     if (_items[index].quantity > 1) {
@@ -51,7 +69,6 @@ class CartController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Remove item entirely regardless of quantity
   void removeAll(String itemId) {
     _items.removeWhere((e) => e.item.id == itemId);
     if (_items.isEmpty) _vendorId = null;

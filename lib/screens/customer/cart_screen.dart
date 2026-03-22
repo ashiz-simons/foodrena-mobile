@@ -130,7 +130,12 @@ class _CartScreenState extends State<CartScreen> {
           "items": cart.items
               .map((e) => {
                     "menuItemId": e.item.id,
+                    "name":       e.item.name,
+                    "price":      e.item.price,
                     "quantity":   e.quantity,
+                    "addOns": e.selectedAddOns
+                        .map((a) => {"name": a.name, "price": a.price})
+                        .toList(),
                   })
               .toList(),
           "deliveryAddress": {
@@ -365,6 +370,15 @@ class _CartScreenState extends State<CartScreen> {
                                       "₦${entry.item.price.toStringAsFixed(0)} each",
                                       style: TextStyle(color: _muted, fontSize: 12),
                                     ),
+                                    if (entry.selectedAddOns.isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      ...entry.selectedAddOns.map((a) => Text(
+                                            "+ ${a.name}  ₦${a.price.toStringAsFixed(0)}",
+                                            style: TextStyle(
+                                                color: _red.withOpacity(0.8),
+                                                fontSize: 11),
+                                          )),
+                                    ],
                                   ],
                                 ),
                               ),
@@ -384,7 +398,7 @@ class _CartScreenState extends State<CartScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
                                   Text(
-                                    "₦${(entry.item.price * entry.quantity).toStringAsFixed(0)}",
+                                    "₦${entry.lineTotal.toStringAsFixed(0)}",
                                     style: TextStyle(fontWeight: FontWeight.bold, color: _text),
                                   ),
                                   const SizedBox(height: 4),

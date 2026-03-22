@@ -10,6 +10,7 @@ import '../../services/order_alert_service.dart';
 import '../../services/notification_store.dart';
 import '../../core/theme/app_theme.dart';
 import '../../utils/session.dart';
+import '../../services/notification_service.dart';
 
 class RiderOrdersScreen extends StatefulWidget {
   const RiderOrdersScreen({super.key});
@@ -21,8 +22,7 @@ class RiderOrdersScreen extends StatefulWidget {
 class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
   bool loading = true;
   String error = "";
-  List orders = [];
-  bool hasNewOrders = false;
+  List orders = []; 
   Map<String, int> _unreadCounts = {};
   String? _myUserId;
 
@@ -33,7 +33,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
 
     SocketService.on("new_order", (data) {
       if (!mounted) return;
-      setState(() => hasNewOrders = true);
 
       NotificationStore.instance.add(AppNotification(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -48,6 +47,9 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
       final orderData = data is Map<String, dynamic>
           ? data
           : <String, dynamic>{};
+
+      // Auto-refresh the list immediately
+      loadOrders();
 
       Navigator.of(context).push(
         MaterialPageRoute(
@@ -80,13 +82,19 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
         _unreadCounts[orderId] = (_unreadCounts[orderId] ?? 0) + 1;
       });
 
-      NotificationStore.instance.add(AppNotification(
+     NotificationStore.instance.add(AppNotification(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         title: "New message from customer",
         body: data["text"] ?? "New message",
         type: "chat",
         receivedAt: DateTime.now(),
       ));
+
+      NotificationService.showChatNotification(
+        title: "New message from customer",
+        body: data["text"] ?? "New message",
+        orderId: orderId,
+      );
     });
   }
 
@@ -121,7 +129,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
         orders = data;
         loading = false;
         error = data.isEmpty ? "No active orders" : "";
-        hasNewOrders = false;
       });
     } catch (_) {
       setState(() {
@@ -241,20 +248,6 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
       ),
       body: Column(
         children: [
-          if (hasNewOrders)
-            GestureDetector(
-              onTap: loadOrders,
-              child: Container(
-                width: double.infinity,
-                color: Colors.orange,
-                padding: const EdgeInsets.all(12),
-                child: const Text(
-                  "🔔 New order assigned — tap to refresh",
-                  style: TextStyle(color: Colors.white),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
           Expanded(
             child: loading
                 ? const Center(child: CircularProgressIndicator())

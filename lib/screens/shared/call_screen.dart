@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../services/chat_service.dart';
 
 class CallScreen extends StatefulWidget {
@@ -83,12 +84,27 @@ class _CallScreenState extends State<CallScreen> {
     }
   }
 
-  Future<void> _initAgora({
+ Future<void> _initAgora({
     required String? token,
     required String channelName,
     required String appId,
   }) async {
     try {
+      // Request mic permission BEFORE initializing Agora
+      final micStatus = await Permission.microphone.request();
+      if (!micStatus.isGranted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Microphone permission required for calls"),
+              backgroundColor: Colors.red,
+            ),
+          );
+          Navigator.pop(context);
+        }
+        return;
+      }
+
       setState(() { _waitingAccept = false; _connecting = true; });
 
       _engine = createAgoraRtcEngine();
@@ -225,60 +241,68 @@ class _CallScreenState extends State<CallScreen> {
               const SizedBox(height: 48),
 
               // ── Avatar ───────────────────────────────────────
-              Container(
-                width: 96, height: 96,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _kGreen.withOpacity(0.15),
-                  border: Border.all(
-                      color: _kGreen.withOpacity(0.4), width: 2),
-                ),
-                child: Center(
-                  child: Text(
-                    widget.recipientName.isNotEmpty
-                        ? widget.recipientName[0].toUpperCase()
-                        : "?",
-                    style: const TextStyle(
-                        color: _kGreen,
-                        fontSize: 36,
-                        fontWeight: FontWeight.w700),
+              Center(
+                child: Container(
+                  width: 96, height: 96,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _kGreen.withOpacity(0.15),
+                    border: Border.all(
+                        color: _kGreen.withOpacity(0.4), width: 2),
+                  ),
+                  child: Center(
+                    child: Text(
+                      widget.recipientName.isNotEmpty
+                          ? widget.recipientName[0].toUpperCase()
+                          : "?",
+                      style: const TextStyle(
+                          color: _kGreen,
+                          fontSize: 36,
+                          fontWeight: FontWeight.w700),
+                    ),
                   ),
                 ),
               ),
 
               const SizedBox(height: 24),
 
-              Text(widget.recipientName,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700)),
+              Center(
+                child: Text(widget.recipientName,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700)),
+              ),
 
               const SizedBox(height: 8),
 
               // ── Status ───────────────────────────────────────
-              Text(
-                _callEnded
-                    ? "Call ended"
-                    : _waitingAccept
-                        ? "Ringing..."
-                        : _connecting
-                            ? "Connecting..."
-                            : _joined
-                                ? _durationLabel
-                                : "Waiting...",
-                style: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
-                    fontSize: 15),
+              Center(
+                child: Text(
+                  _callEnded
+                      ? "Call ended"
+                      : _waitingAccept
+                          ? "Ringing..."
+                          : _connecting
+                              ? "Connecting..."
+                              : _joined
+                                  ? _durationLabel
+                                  : "Waiting...",
+                  style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 15),
+                ),
               ),
 
               if (_waitingAccept) ...[
                 const SizedBox(height: 8),
-                Text(
-                  "Waiting for ${widget.recipientName} to answer",
-                  style: TextStyle(
-                      color: Colors.white.withOpacity(0.4),
-                      fontSize: 12),
+                Center(
+                  child: Text(
+                    "Waiting for ${widget.recipientName} to answer",
+                    style: TextStyle(
+                        color: Colors.white.withOpacity(0.4),
+                        fontSize: 12),
+                  ),
                 ),
               ],
 

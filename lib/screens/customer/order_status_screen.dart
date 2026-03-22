@@ -7,6 +7,7 @@ import '../../services/notification_store.dart';
 import '../../core/theme/app_theme.dart';
 import '../shared/chat_screen.dart';
 import '../shared/incoming_call_screen.dart';
+import '../../services/notification_service.dart';
 
 class OrderStatusScreen extends StatefulWidget {
   final String orderId;
@@ -39,87 +40,109 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     await SocketService.connectToRoom("order_${widget.orderId}");
 
     // Listen for incoming calls
-    SocketService.on("call_invite", (data) {
-      if (!mounted) return;
-      final callOrderId = data["orderId"]?.toString() ?? "";
-      if (callOrderId != widget.orderId) return;
+    SocketService.on(
+      "call_invite",
+      (data) {
+        if (!mounted) return;
+        final callOrderId = data["orderId"]?.toString() ?? "";
+        if (callOrderId != widget.orderId) return;
 
-      final callerName = data["callerName"] ?? "Rider";
-      final channelName = data["channelName"] ?? callOrderId;
-      final appId = data["appId"] ?? "e03b6ecb7bcf4e279d314411ec817e7e";
-      final token = data["token"];
+        final callerName  = data["callerName"] ?? "Rider";
+        final channelName = data["channelName"] ?? callOrderId;
+        final appId       = data["appId"] ?? "e03b6ecb7bcf4e279d314411ec817e7e";
+        final token       = data["token"];
 
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => IncomingCallScreen(
-            orderId:     callOrderId,
-            callerName:  callerName,
-            senderRole:  "customer",
-            channelName: channelName,
-            appId:       appId,
-            token:       token,
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => IncomingCallScreen(
+              orderId:     callOrderId,
+              callerName:  callerName,
+              senderRole:  "customer",
+              channelName: channelName,
+              appId:       appId,
+              token:       token,
+            ),
           ),
-        ),
-      );
-    });
-
-    // Listen for incoming chat messages — show notification + increment badge
-    SocketService.on("receive_message", (data) {
-      if (!mounted) return;
-      final msgOrderId = data["orderId"]?.toString() ?? "";
-      if (msgOrderId != widget.orderId) return;
-      final senderRole = data["senderRole"] ?? "";
-      if (senderRole == "customer") return; // don't notify self
-
-      setState(() => _unreadCount++);
-
-      NotificationStore.instance.add(AppNotification(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        title: "New message from $_riderName",
-        body: data["text"] ?? "New message",
-        type: "chat",
-        receivedAt: DateTime.now(),
-      ));
-    });
-
-    SocketService.on("order_status_update", (data) {
-      if (!mounted) return;
-      final incomingId =
-          data["orderId"]?.toString() ?? data["_id"]?.toString();
-      if (incomingId != widget.orderId) return;
-      final newStatus = data["status"] as String?;
-      if (newStatus != null) setState(() => status = newStatus);
-    });
-
-    SocketService.on("rider_live_location", (data) {
-      if (!mounted) return;
-      final incomingId = data["orderId"]?.toString();
-      if (incomingId != null && incomingId != widget.orderId) return;
-
-      final lat = data["lat"];
-      final lng = data["lng"];
-      if (lat == null || lng == null) return;
-
-      final position = LatLng(
-        (lat as num).toDouble(),
-        (lng as num).toDouble(),
-      );
-
-      setState(() {
-        riderPosition = position;
-        riderMarker = Marker(
-          markerId: const MarkerId("rider"),
-          position: position,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueOrange),
-          infoWindow: const InfoWindow(title: "Your rider"),
         );
-      });
+      },
+      handlerId: "order_status_${widget.orderId}",
+    );
 
-      mapController?.animateCamera(CameraUpdate.newLatLng(position));
-    });
+    // Listen for incoming chat messages
+    SocketService.on(
+      "receive_message",
+      (data) {
+        if (!mounted) return;
+        final msgOrderId = data["orderId"]?.toString() ?? "";
+        if (msgOrderId != widget.orderId) return;
+        final senderRole = data["senderRole"] ?? "";
+        if (senderRole == "customer") return;
+
+        setState(() => _unreadCount++);
+
+        NotificationStore.instance.add(AppNotification(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          title: "New message from $_riderName",
+          body: data["text"] ?? "New message",
+          type: "chat",
+          receivedAt: DateTime.now(),
+        ));
+
+        NotificationService.showChatNotification(
+          title: "New message from $_riderName",
+          body: data["text"] ?? "New message",
+          orderId: widget.orderId,
+        );
+      },
+      handlerId: "order_status_msg_${widget.orderId}",
+    );
+
+    SocketService.on(
+      "order_status_update",
+      (data) {
+        if (!mounted) return;
+        final incomingId =
+            data["orderId"]?.toString() ?? data["_id"]?.toString();
+        if (incomingId != widget.orderId) return;
+        final newStatus = data["status"] as String?;
+        if (newStatus != null) setState(() => status = newStatus);
+      },
+      handlerId: "order_status_update_${widget.orderId}",
+    );
+
+    SocketService.on(
+      "rider_live_location",
+      (data) {
+        if (!mounted) return;
+        final incomingId = data["orderId"]?.toString();
+        if (incomingId != null && incomingId != widget.orderId) return;
+
+        final lat = data["lat"];
+        final lng = data["lng"];
+        if (lat == null || lng == null) return;
+
+        final position = LatLng(
+          (lat as num).toDouble(),
+          (lng as num).toDouble(),
+        );
+
+        setState(() {
+          riderPosition = position;
+          riderMarker = Marker(
+            markerId: const MarkerId("rider"),
+            position: position,
+            icon: BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueOrange),
+            infoWindow: const InfoWindow(title: "Your rider"),
+          );
+        });
+
+        mapController?.animateCamera(CameraUpdate.newLatLng(position));
+      },
+      handlerId: "order_status_loc_${widget.orderId}",
+    );
   }
 
   Future<void> _fetchCurrentStatus() async {
@@ -131,7 +154,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
           if (res["status"] != null) status = res["status"];
           final rider = res["rider"];
           if (rider is Map) {
-            _riderName = rider["user"]?["name"] ?? rider["name"] ?? "Rider";
+            _riderName =
+                rider["user"]?["name"] ?? rider["name"] ?? "Rider";
           }
         });
       }
@@ -142,8 +166,10 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Cancel order?", style: TextStyle(fontWeight: FontWeight.bold)),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16)),
+        title: const Text("Cancel order?",
+            style: TextStyle(fontWeight: FontWeight.bold)),
         content: const Text(
           "This order will be cancelled. If you paid online, the amount will be refunded to your wallet.",
           style: TextStyle(fontSize: 14),
@@ -151,14 +177,16 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text("Keep order", style: TextStyle(color: Colors.grey.shade500)),
+            child: Text("Keep order",
+                style: TextStyle(color: Colors.grey.shade500)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
               elevation: 0,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
             ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text("Yes, cancel"),
@@ -170,7 +198,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
 
     setState(() => _cancelling = true);
     try {
-      final res = await CustomerWalletService.cancelOrder(widget.orderId);
+      final res =
+          await CustomerWalletService.cancelOrder(widget.orderId);
       if (!mounted) return;
       setState(() {
         status = 'cancelled';
@@ -189,7 +218,9 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
       if (!mounted) return;
       setState(() => _cancelling = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceAll("Exception: ", ""))),
+        SnackBar(
+            content:
+                Text(e.toString().replaceAll("Exception: ", ""))),
       );
     }
   }
@@ -197,10 +228,14 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
   @override
   void dispose() {
     SocketService.emit("leaveRoom", widget.orderId);
-    SocketService.off("order_status_update");
-    SocketService.off("rider_live_location");
-    SocketService.off("receive_message");
-    SocketService.off("call_invite");
+    SocketService.off("call_invite",
+        handlerId: "order_status_${widget.orderId}");
+    SocketService.off("receive_message",
+        handlerId: "order_status_msg_${widget.orderId}");
+    SocketService.off("order_status_update",
+        handlerId: "order_status_update_${widget.orderId}");
+    SocketService.off("rider_live_location",
+        handlerId: "order_status_loc_${widget.orderId}");
     mapController?.dispose();
     super.dispose();
   }
@@ -226,16 +261,22 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final hasRider = ["rider_assigned", "arrived_at_pickup",
-        "picked_up", "on_the_way"].contains(status);
+    final hasRider = [
+      "rider_assigned",
+      "arrived_at_pickup",
+      "picked_up",
+      "on_the_way"
+    ].contains(status);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text("Order Status"),
         automaticallyImplyLeading: false,
-        leading: _isTerminal ? const SizedBox() : BackButton(
-          onPressed: () => Navigator.of(context).pop(),
-        ),
+        leading: _isTerminal
+            ? const SizedBox()
+            : BackButton(
+                onPressed: () => Navigator.of(context).pop(),
+              ),
       ),
       body: _isTerminal ? _terminalView() : _trackingView(),
       floatingActionButton: hasRider
@@ -272,7 +313,6 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     );
   }
 
-  // ── Delivered / Cancelled full screen ────────────
   Widget _terminalView() {
     final delivered = status == "delivered";
     return Center(
@@ -307,7 +347,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               delivered
                   ? "Your order has been delivered. Enjoy your meal!"
                   : "This order was cancelled. Any refund has been sent to your wallet.",
-              style: const TextStyle(color: Colors.grey, fontSize: 14),
+              style:
+                  const TextStyle(color: Colors.grey, fontSize: 14),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 40),
@@ -324,11 +365,13 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                   elevation: 0,
                 ),
                 onPressed: () {
-                  Navigator.of(context).popUntil((route) => route.isFirst);
+                  Navigator.of(context)
+                      .popUntil((route) => route.isFirst);
                 },
                 child: const Text(
                   "Back to Home",
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
             ),
@@ -338,19 +381,15 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     );
   }
 
-  // ── Active tracking view ──────────────────────────
   Widget _trackingView() {
     return Column(
       children: [
-        // ── Progress steps ──────────────────────────
         Container(
           color: Colors.white,
           padding:
               const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: _progressSteps(),
         ),
-
-        // ── Map ─────────────────────────────────────
         Expanded(
           flex: 3,
           child: riderPosition == null
@@ -362,7 +401,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                       const SizedBox(height: 16),
                       Text(
                         _waitingText(),
-                        style: const TextStyle(color: Colors.grey),
+                        style:
+                            const TextStyle(color: Colors.grey),
                         textAlign: TextAlign.center,
                       ),
                     ],
@@ -373,14 +413,13 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                     target: riderPosition!,
                     zoom: 15,
                   ),
-                  markers: riderMarker != null ? {riderMarker!} : {},
+                  markers:
+                      riderMarker != null ? {riderMarker!} : {},
                   onMapCreated: (c) => mapController = c,
                   myLocationEnabled: true,
                   zoomControlsEnabled: false,
                 ),
         ),
-
-        // ── Status Panel ────────────────────────────
         Container(
           width: double.infinity,
           padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
@@ -401,11 +440,10 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
               const SizedBox(height: 8),
               Text(
                 _statusDescription(),
-                style:
-                    const TextStyle(color: Colors.grey, fontSize: 13),
+                style: const TextStyle(
+                    color: Colors.grey, fontSize: 13),
                 textAlign: TextAlign.center,
               ),
-              // ── Cancel button — pending only ────────────────────────
               if (_isPending) ...[
                 const SizedBox(height: 16),
                 SizedBox(
@@ -416,22 +454,30 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                             width: 16,
                             height: 16,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.red),
+                                strokeWidth: 2,
+                                color: Colors.red),
                           )
                         : const Icon(Icons.cancel_outlined,
                             color: Colors.red, size: 18),
                     label: Text(
-                      _cancelling ? "Cancelling..." : "Cancel Order",
+                      _cancelling
+                          ? "Cancelling..."
+                          : "Cancel Order",
                       style: const TextStyle(
-                          color: Colors.red, fontWeight: FontWeight.w600),
+                          color: Colors.red,
+                          fontWeight: FontWeight.w600),
                     ),
                     style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.red, width: 1.4),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      side: const BorderSide(
+                          color: Colors.red, width: 1.4),
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 12),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                          borderRadius:
+                              BorderRadius.circular(12)),
                     ),
-                    onPressed: _cancelling ? null : _confirmCancel,
+                    onPressed:
+                        _cancelling ? null : _confirmCancel,
                   ),
                 ),
               ],
@@ -442,13 +488,28 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
     );
   }
 
-  // ── Step progress indicator ───────────────────────
   Widget _progressSteps() {
     final steps = [
-      {"status": "accepted", "label": "Accepted", "icon": Icons.thumb_up},
-      {"status": "preparing", "label": "Preparing", "icon": Icons.restaurant},
-      {"status": "on_the_way", "label": "On the way", "icon": Icons.directions_bike},
-      {"status": "delivered", "label": "Delivered", "icon": Icons.done_all},
+      {
+        "status": "accepted",
+        "label": "Accepted",
+        "icon": Icons.thumb_up
+      },
+      {
+        "status": "preparing",
+        "label": "Preparing",
+        "icon": Icons.restaurant
+      },
+      {
+        "status": "on_the_way",
+        "label": "On the way",
+        "icon": Icons.directions_bike
+      },
+      {
+        "status": "delivered",
+        "label": "Delivered",
+        "icon": Icons.done_all
+      },
     ];
 
     final statusOrder = [
@@ -469,7 +530,8 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
       children: steps.asMap().entries.map((entry) {
         final i = entry.key;
         final step = entry.value;
-        final stepIndex = statusOrder.indexOf(step["status"] as String);
+        final stepIndex =
+            statusOrder.indexOf(step["status"] as String);
         final isDone = currentIndex >= stepIndex;
 
         return Expanded(
@@ -480,12 +542,14 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                   children: [
                     CircleAvatar(
                       radius: 16,
-                      backgroundColor:
-                          isDone ? Colors.green : Colors.grey.shade200,
+                      backgroundColor: isDone
+                          ? Colors.green
+                          : Colors.grey.shade200,
                       child: Icon(
                         step["icon"] as IconData,
                         size: 14,
-                        color: isDone ? Colors.white : Colors.grey,
+                        color:
+                            isDone ? Colors.white : Colors.grey,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -493,7 +557,9 @@ class _OrderStatusScreenState extends State<OrderStatusScreen> {
                       step["label"] as String,
                       style: TextStyle(
                         fontSize: 10,
-                        color: isDone ? Colors.green : Colors.grey,
+                        color: isDone
+                            ? Colors.green
+                            : Colors.grey,
                         fontWeight: isDone
                             ? FontWeight.bold
                             : FontWeight.normal,
